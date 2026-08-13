@@ -23,6 +23,7 @@ def get_user_inputs():
     current_iv = float(input("Current IV percentage: "))
     iv_low = float(input("52-week IV low percentage: "))
     iv_high = float(input("52-week IV high percentage: "))
+    iv_percentile = float(input("IV Percentile (0 to 100): "))
 
     # These prices provide technical context entered by the user.
     support_price = float(input("Estimated support price: $"))
@@ -44,6 +45,7 @@ def get_user_inputs():
         current_iv,
         iv_low,
         iv_high,
+        iv_percentile,
         support_price,
         ma50,
         ma200,
@@ -64,6 +66,7 @@ def validate_inputs(
     delta,
     iv_low,
     iv_high,
+    iv_percentile,
     support_price,
     ma50,
     ma200,
@@ -94,6 +97,10 @@ def validate_inputs(
         raise ValueError("The 52-week IV high cannot be lower than the IV low.")
     if iv_high == iv_low:
         raise ValueError("The 52-week IV high and IV low cannot be the same.")
+
+    # IV Percentile is entered manually as a percentage from 0 through 100.
+    if iv_percentile < 0 or iv_percentile > 100:
+        raise ValueError("IV Percentile must be between 0 and 100.")
 
     # Technical price entries must be positive so their comparisons make sense.
     if support_price <= 0:
@@ -192,6 +199,77 @@ def describe_earnings_risk(days_until_earnings, days_to_expiration):
     return "Clear - Earnings occur after option expiration."
 
 
+# This function creates independent, informational checklist messages.
+def create_trade_checklist(
+    delta,
+    iv_rank,
+    iv_percentile,
+    strike_price,
+    support_price,
+    days_until_earnings,
+    days_to_expiration,
+    stock_price,
+    ma50,
+    ma200,
+):
+    """Return the six neutral trade-checklist messages."""
+
+    if 0.15 <= delta <= 0.30:
+        delta_check = "Delta Check: PASS - Within common put-selling range."
+    else:
+        delta_check = (
+            "Delta Check: REVIEW - Outside the 0.15 to 0.30 reference range."
+        )
+
+    if iv_rank >= 30:
+        iv_rank_check = (
+            "IV Rank Check: PASS - Volatility is relatively elevated."
+        )
+    else:
+        iv_rank_check = "IV Rank Check: REVIEW - IV Rank is below 30."
+
+    if iv_percentile >= 50:
+        iv_percentile_check = (
+            "IV Percentile Check: PASS - Current IV is above much of its "
+            "recent history."
+        )
+    else:
+        iv_percentile_check = (
+            "IV Percentile Check: REVIEW - Current IV is below the 50th "
+            "percentile."
+        )
+
+    if strike_price < support_price:
+        support_check = "Support Check: PASS - Strike is below estimated support."
+    else:
+        support_check = (
+            "Support Check: REVIEW - Strike is at or above estimated support."
+        )
+
+    if earnings_occur_during_trade(days_until_earnings, days_to_expiration):
+        earnings_check = (
+            "Earnings Check: WARNING - Earnings occur during the trade."
+        )
+    else:
+        earnings_check = "Earnings Check: PASS - Earnings occur after expiration."
+
+    if stock_price > ma50 and stock_price > ma200:
+        trend_check = "Trend Check: PASS - Price is above both moving averages."
+    else:
+        trend_check = (
+            "Trend Check: REVIEW - Price is not above both moving averages."
+        )
+
+    return (
+        delta_check,
+        iv_rank_check,
+        iv_percentile_check,
+        support_check,
+        earnings_check,
+        trend_check,
+    )
+
+
 # This function performs all seven requested calculations.
 # It accepts the values needed for the formulas and returns the seven results.
 def calculate_put_results(
@@ -253,6 +331,7 @@ def calculate_put_results(
 # The formatting after each colon controls commas and decimal places.
 def display_results(
     stock_price,
+    strike_price,
     days_to_expiration,
     maximum_profit,
     breakeven_price,
@@ -264,6 +343,7 @@ def display_results(
     delta,
     current_iv,
     iv_rank,
+    iv_percentile,
     support_price,
     support_distance,
     strike_vs_support,
@@ -293,6 +373,7 @@ def display_results(
     print(f"Delta:                {delta:.2f}")
     print(f"Current IV:           {current_iv:.2f}%")
     print(f"IV Rank:              {iv_rank:.2f}%")
+    print(f"IV Percentile:        {iv_percentile:.2f}%")
     print(f"Support Price:        ${support_price:,.2f}")
     print(
         f"Price vs Support:     {abs(support_distance):.2f}% "
@@ -329,6 +410,23 @@ def display_results(
     )
     print(f"Earnings Risk:        {earnings_risk}")
 
+    # Each checklist item is informational and is displayed independently.
+    checklist = create_trade_checklist(
+        delta,
+        iv_rank,
+        iv_percentile,
+        strike_price,
+        support_price,
+        days_until_earnings,
+        days_to_expiration,
+        stock_price,
+        ma50,
+        ma200,
+    )
+    print("\n--- Informational Trade Checklist ---")
+    for checklist_item in checklist:
+        print(checklist_item)
+
 
 # This is the main function: it coordinates the other functions in order.
 # It gets input, validates it, calculates the results, and displays them.
@@ -347,6 +445,7 @@ def main():
         current_iv,
         iv_low,
         iv_high,
+        iv_percentile,
         support_price,
         ma50,
         ma200,
@@ -364,6 +463,7 @@ def main():
         delta,
         iv_low,
         iv_high,
+        iv_percentile,
         support_price,
         ma50,
         ma200,
@@ -410,6 +510,7 @@ def main():
     # Pass the input context and calculated values to the display function.
     display_results(
         stock_price,
+        strike_price,
         days_to_expiration,
         maximum_profit,
         breakeven_price,
@@ -421,6 +522,7 @@ def main():
         delta,
         current_iv,
         iv_rank,
+        iv_percentile,
         support_price,
         support_distance,
         strike_vs_support,

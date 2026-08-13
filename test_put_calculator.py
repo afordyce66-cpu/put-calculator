@@ -6,6 +6,7 @@ from put_calculator import (
     calculate_iv_rank,
     calculate_put_results,
     calculate_technical_context,
+    create_trade_checklist,
     earnings_occur_during_trade,
     validate_inputs,
 )
@@ -26,6 +27,7 @@ class PutCalculatorTests(unittest.TestCase):
             "delta": 0.20,
             "iv_low": 25,
             "iv_high": 65,
+            "iv_percentile": 65,
             "support_price": 22.50,
             "ma50": 24,
             "ma200": 21,
@@ -40,6 +42,24 @@ class PutCalculatorTests(unittest.TestCase):
         inputs.update(changes)
         with self.assertRaises(ValueError):
             validate_inputs(**inputs)
+
+    def make_checklist(self, **changes):
+        """Create a checklist, changing only values needed by a test."""
+
+        inputs = {
+            "delta": 0.20,
+            "iv_rank": 50,
+            "iv_percentile": 65,
+            "strike_price": 22,
+            "support_price": 22.50,
+            "days_until_earnings": 45,
+            "days_to_expiration": 30,
+            "stock_price": 25,
+            "ma50": 24,
+            "ma200": 21,
+        }
+        inputs.update(changes)
+        return create_trade_checklist(**inputs)
 
     def test_put_calculations(self):
         """Test all seven original put calculations."""
@@ -113,6 +133,57 @@ class PutCalculatorTests(unittest.TestCase):
 
     def test_negative_days_until_earnings_are_invalid(self):
         self.assert_invalid(days_until_earnings=-1)
+
+    def test_valid_iv_percentile(self):
+        validate_inputs(**self.valid_inputs)
+
+    def test_iv_percentile_below_zero_is_invalid(self):
+        self.assert_invalid(iv_percentile=-0.01)
+
+    def test_iv_percentile_above_100_is_invalid(self):
+        self.assert_invalid(iv_percentile=100.01)
+
+    def test_delta_check_pass(self):
+        self.assertIn("Delta Check: PASS", self.make_checklist(delta=0.20)[0])
+
+    def test_delta_check_review(self):
+        self.assertIn("Delta Check: REVIEW", self.make_checklist(delta=0.40)[0])
+
+    def test_iv_rank_check_pass(self):
+        self.assertIn("IV Rank Check: PASS", self.make_checklist(iv_rank=50)[1])
+
+    def test_iv_rank_check_review(self):
+        self.assertIn("IV Rank Check: REVIEW", self.make_checklist(iv_rank=20)[1])
+
+    def test_iv_percentile_check_pass(self):
+        checklist = self.make_checklist(iv_percentile=65)
+        self.assertIn("IV Percentile Check: PASS", checklist[2])
+
+    def test_iv_percentile_check_review(self):
+        checklist = self.make_checklist(iv_percentile=30)
+        self.assertIn("IV Percentile Check: REVIEW", checklist[2])
+
+    def test_support_check_pass(self):
+        self.assertIn("Support Check: PASS", self.make_checklist()[3])
+
+    def test_support_check_review(self):
+        checklist = self.make_checklist(strike_price=23, support_price=22.50)
+        self.assertIn("Support Check: REVIEW", checklist[3])
+
+    def test_earnings_check_pass(self):
+        checklist = self.make_checklist(days_until_earnings=45)
+        self.assertIn("Earnings Check: PASS", checklist[4])
+
+    def test_earnings_check_warning(self):
+        checklist = self.make_checklist(days_until_earnings=20)
+        self.assertIn("Earnings Check: WARNING", checklist[4])
+
+    def test_trend_check_pass(self):
+        self.assertIn("Trend Check: PASS", self.make_checklist()[5])
+
+    def test_trend_check_review(self):
+        checklist = self.make_checklist(stock_price=23, ma50=24, ma200=21)
+        self.assertIn("Trend Check: REVIEW", checklist[5])
 
 
 if __name__ == "__main__":
