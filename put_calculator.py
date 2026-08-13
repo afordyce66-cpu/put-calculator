@@ -24,6 +24,11 @@ def get_user_inputs():
     iv_low = float(input("52-week IV low percentage: "))
     iv_high = float(input("52-week IV high percentage: "))
 
+    # These prices provide technical context entered by the user.
+    support_price = float(input("Estimated support price: $"))
+    ma50 = float(input("50-day moving average: $"))
+    ma200 = float(input("200-day moving average: $"))
+
     # return sends these values back to the line that called this function.
     return (
         stock_price,
@@ -35,6 +40,9 @@ def get_user_inputs():
         current_iv,
         iv_low,
         iv_high,
+        support_price,
+        ma50,
+        ma200,
     )
 
 
@@ -50,6 +58,9 @@ def validate_inputs(
     delta,
     iv_low,
     iv_high,
+    support_price,
+    ma50,
+    ma200,
 ):
     """Raise an error if any input is outside its allowed range."""
 
@@ -76,12 +87,65 @@ def validate_inputs(
     if iv_high == iv_low:
         raise ValueError("The 52-week IV high and IV low cannot be the same.")
 
+    # Technical price entries must be positive so their comparisons make sense.
+    if support_price <= 0:
+        raise ValueError("Support price must be greater than zero.")
+    if ma50 <= 0 or ma200 <= 0:
+        raise ValueError("Moving averages must be greater than zero.")
+
 
 # This function calculates where current IV sits in its 52-week range.
 def calculate_iv_rank(current_iv, iv_low, iv_high):
     """Calculate and return IV Rank as a percentage."""
 
     return ((current_iv - iv_low) / (iv_high - iv_low)) * 100
+
+
+# This function calculates the requested technical price comparisons.
+def calculate_technical_context(
+    stock_price,
+    strike_price,
+    support_price,
+    ma50,
+    ma200,
+):
+    """Calculate distances from support and the moving averages."""
+
+    support_distance = ((stock_price - support_price) / support_price) * 100
+    strike_vs_support = ((support_price - strike_price) / support_price) * 100
+    ma50_distance = ((stock_price - ma50) / ma50) * 100
+    ma200_distance = ((stock_price - ma200) / ma200) * 100
+
+    return (
+        support_distance,
+        strike_vs_support,
+        ma50_distance,
+        ma200_distance,
+    )
+
+
+# This helper gives a price comparison simple beginner-friendly wording.
+def describe_price_position(distance):
+    """Describe whether a price is above, below, or nearly equal."""
+
+    # A difference smaller than 0.01 percentage point is approximately equal.
+    if abs(distance) < 0.01:
+        return "approximately equal"
+    if distance > 0:
+        return "above"
+    return "below"
+
+
+# Strike vs support has the opposite wording from the other comparisons:
+# a positive calculation means the strike itself is below support.
+def describe_strike_position(strike_vs_support):
+    """Describe whether the strike is below, at, or above support."""
+
+    if abs(strike_vs_support) < 0.01:
+        return "at support"
+    if strike_vs_support > 0:
+        return "below support"
+    return "above support"
 
 
 # This function performs all seven requested calculations.
@@ -156,6 +220,13 @@ def display_results(
     delta,
     current_iv,
     iv_rank,
+    support_price,
+    support_distance,
+    strike_vs_support,
+    ma50,
+    ma50_distance,
+    ma200,
+    ma200_distance,
 ):
     """Display the trade details and calculated results."""
 
@@ -175,6 +246,25 @@ def display_results(
     print(f"Delta:                {delta:.2f}")
     print(f"Current IV:           {current_iv:.2f}%")
     print(f"IV Rank:              {iv_rank:.2f}%")
+    print(f"Support Price:        ${support_price:,.2f}")
+    print(
+        f"Price vs Support:     {abs(support_distance):.2f}% "
+        f"{describe_price_position(support_distance)}"
+    )
+    print(
+        f"Strike vs Support:    {abs(strike_vs_support):.2f}% "
+        f"{describe_strike_position(strike_vs_support)}"
+    )
+    print(f"50-Day MA:            ${ma50:,.2f}")
+    print(
+        f"Price vs 50-Day MA:   {abs(ma50_distance):.2f}% "
+        f"{describe_price_position(ma50_distance)}"
+    )
+    print(f"200-Day MA:           ${ma200:,.2f}")
+    print(
+        f"Price vs 200-Day MA:  {abs(ma200_distance):.2f}% "
+        f"{describe_price_position(ma200_distance)}"
+    )
 
 
 # This is the main function: it coordinates the other functions in order.
@@ -194,6 +284,9 @@ def main():
         current_iv,
         iv_low,
         iv_high,
+        support_price,
+        ma50,
+        ma200,
     ) = get_user_inputs()
 
     # Check all inputs before using them in calculations.
@@ -206,6 +299,9 @@ def main():
         delta,
         iv_low,
         iv_high,
+        support_price,
+        ma50,
+        ma200,
     )
 
     # Run the formulas and unpack the seven returned results.
@@ -228,6 +324,20 @@ def main():
     # Calculate IV Rank after validation confirms that the IV range is valid.
     iv_rank = calculate_iv_rank(current_iv, iv_low, iv_high)
 
+    # Calculate the technical comparisons after validating all price inputs.
+    (
+        support_distance,
+        strike_vs_support,
+        ma50_distance,
+        ma200_distance,
+    ) = calculate_technical_context(
+        stock_price,
+        strike_price,
+        support_price,
+        ma50,
+        ma200,
+    )
+
     # Pass the input context and calculated values to the display function.
     display_results(
         stock_price,
@@ -242,6 +352,13 @@ def main():
         delta,
         current_iv,
         iv_rank,
+        support_price,
+        support_distance,
+        strike_vs_support,
+        ma50,
+        ma50_distance,
+        ma200,
+        ma200_distance,
     )
 
 
