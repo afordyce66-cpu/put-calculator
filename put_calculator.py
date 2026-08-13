@@ -1,9 +1,9 @@
 """Calculate the basic numbers for a cash-secured put option."""
 
 
-# This function asks the user for all five pieces of information.
-# It converts prices to decimal numbers and counts to whole numbers.
-# Finally, it returns all five values so another function can use them.
+# This function asks the user for the trade and volatility information.
+# It converts prices and percentages to decimal numbers and counts to whole
+# numbers. Finally, it returns the values so another function can use them.
 def get_user_inputs():
     """Ask for and return the details of the put option trade."""
 
@@ -16,6 +16,14 @@ def get_user_inputs():
     number_of_contracts = int(input("Number of contracts: "))
     days_to_expiration = int(input("Days to expiration: "))
 
+    # Delta is entered as an absolute decimal value, such as 0.20.
+    delta = float(input("Absolute put delta (0 to 1): "))
+
+    # IV percentages are entered as normal numbers, such as 45 for 45%.
+    current_iv = float(input("Current IV percentage: "))
+    iv_low = float(input("52-week IV low percentage: "))
+    iv_high = float(input("52-week IV high percentage: "))
+
     # return sends these values back to the line that called this function.
     return (
         stock_price,
@@ -23,6 +31,10 @@ def get_user_inputs():
         premium_received,
         number_of_contracts,
         days_to_expiration,
+        delta,
+        current_iv,
+        iv_low,
+        iv_high,
     )
 
 
@@ -35,6 +47,9 @@ def validate_inputs(
     premium_received,
     number_of_contracts,
     days_to_expiration,
+    delta,
+    iv_low,
+    iv_high,
 ):
     """Raise an error if any input is outside its allowed range."""
 
@@ -49,6 +64,24 @@ def validate_inputs(
     # The contract count and days to expiration must be positive whole numbers.
     if number_of_contracts <= 0 or days_to_expiration <= 0:
         raise ValueError("Contracts and days to expiration must be greater than zero.")
+
+    # The user enters the absolute value of delta, so it must be from 0 to 1.
+    if delta < 0 or delta > 1:
+        raise ValueError("Delta must be between 0 and 1.")
+
+    # IV Rank needs a high that is above the low. Equal values would cause
+    # division by zero, while a lower high would make the range invalid.
+    if iv_high < iv_low:
+        raise ValueError("The 52-week IV high cannot be lower than the IV low.")
+    if iv_high == iv_low:
+        raise ValueError("The 52-week IV high and IV low cannot be the same.")
+
+
+# This function calculates where current IV sits in its 52-week range.
+def calculate_iv_rank(current_iv, iv_low, iv_high):
+    """Calculate and return IV Rank as a percentage."""
+
+    return ((current_iv - iv_low) / (iv_high - iv_low)) * 100
 
 
 # This function performs all seven requested calculations.
@@ -120,6 +153,9 @@ def display_results(
     annualized_return,
     strike_cushion,
     breakeven_cushion,
+    delta,
+    current_iv,
+    iv_rank,
 ):
     """Display the trade details and calculated results."""
 
@@ -136,6 +172,9 @@ def display_results(
     print(f"Annualized return:    {annualized_return:.2f}%")
     print(f"Strike cushion:       {strike_cushion:.2f}%")
     print(f"Breakeven cushion:    {breakeven_cushion:.2f}%")
+    print(f"Delta:                {delta:.2f}")
+    print(f"Current IV:           {current_iv:.2f}%")
+    print(f"IV Rank:              {iv_rank:.2f}%")
 
 
 # This is the main function: it coordinates the other functions in order.
@@ -144,13 +183,17 @@ def display_results(
 def main():
     """Run the cash-secured put calculator from beginning to end."""
 
-    # Unpack the five returned values into five clearly named variables.
+    # Unpack the returned values into clearly named variables.
     (
         stock_price,
         strike_price,
         premium_received,
         number_of_contracts,
         days_to_expiration,
+        delta,
+        current_iv,
+        iv_low,
+        iv_high,
     ) = get_user_inputs()
 
     # Check all inputs before using them in calculations.
@@ -160,6 +203,9 @@ def main():
         premium_received,
         number_of_contracts,
         days_to_expiration,
+        delta,
+        iv_low,
+        iv_high,
     )
 
     # Run the formulas and unpack the seven returned results.
@@ -179,6 +225,9 @@ def main():
         days_to_expiration,
     )
 
+    # Calculate IV Rank after validation confirms that the IV range is valid.
+    iv_rank = calculate_iv_rank(current_iv, iv_low, iv_high)
+
     # Pass the input context and calculated values to the display function.
     display_results(
         stock_price,
@@ -190,10 +239,17 @@ def main():
         annualized_return,
         strike_cushion,
         breakeven_cushion,
+        delta,
+        current_iv,
+        iv_rank,
     )
 
 
 # Python sets __name__ to "__main__" when this file is run directly.
 # This check calls main() when running this file, but not when importing it.
 if __name__ == "__main__":
-    main()
+    # Show invalid entries as a short, beginner-friendly message.
+    try:
+        main()
+    except ValueError as error:
+        print(f"\nError: {error}")
