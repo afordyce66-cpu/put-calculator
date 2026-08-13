@@ -176,11 +176,18 @@ def describe_resistance_position(price_vs_resistance):
     return describe_price_position(price_vs_resistance)
 
 
-# This helper compares the manually entered earnings timing with option DTE.
+# This function reports whether earnings occur during the option trade.
+def earnings_occur_during_trade(days_until_earnings, days_to_expiration):
+    """Return True when earnings occur on or before option expiration."""
+
+    return days_until_earnings <= days_to_expiration
+
+
+# This helper describes the earnings timing comparison for the user.
 def describe_earnings_risk(days_until_earnings, days_to_expiration):
     """Return an informational warning about earnings timing."""
 
-    if days_until_earnings <= days_to_expiration:
+    if earnings_occur_during_trade(days_until_earnings, days_to_expiration):
         return "WARNING - Earnings occur before option expiration."
     return "Clear - Earnings occur after option expiration."
 
