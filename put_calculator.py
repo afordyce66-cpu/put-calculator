@@ -1,5 +1,7 @@
 """Calculate the basic numbers for a cash-secured put option."""
 
+from datetime import date
+
 from market_data import get_market_data
 
 
@@ -19,11 +21,27 @@ def get_user_inputs():
         ma200 = float(market_data["ma200"])
         market_data_source = "Retrieved"
 
+        try:
+            next_earnings_date = market_data.get("next_earnings_date")
+            days_until_earnings = int(market_data.get("days_until_earnings"))
+            if not isinstance(next_earnings_date, date):
+                raise ValueError("The retrieved earnings date was malformed.")
+            if days_until_earnings < 0:
+                raise ValueError("The retrieved earnings date is in the past.")
+            earnings_data_source = "Retrieved"
+        except (TypeError, ValueError):
+            next_earnings_date = None
+            days_until_earnings = None
+            earnings_data_source = "Manual"
+
         print("\nMarket data retrieved automatically:")
         print(f"Ticker:               {ticker}")
         print(f"Latest closing price: ${stock_price:,.2f}")
         print(f"50-Day MA:            ${ma50:,.2f}")
         print(f"200-Day MA:           ${ma200:,.2f}")
+        if earnings_data_source == "Retrieved":
+            print(f"Next Earnings Date:   {next_earnings_date.isoformat()}")
+            print(f"Days Until Earnings:  {days_until_earnings}")
     except Exception:
         # Any provider, connection, ticker, or data-format problem uses fallback.
         print("\nAutomatic market data unavailable.")
@@ -32,6 +50,12 @@ def get_user_inputs():
         ma50 = float(input("50-day moving average: $"))
         ma200 = float(input("200-day moving average: $"))
         market_data_source = "Manual"
+        next_earnings_date = None
+        earnings_data_source = "Manual"
+
+    if earnings_data_source == "Manual":
+        print("\nAutomatic earnings date unavailable.")
+        print("Please enter days until earnings manually.")
 
     # input() returns text, and float() converts it to a decimal number.
     strike_price = float(input("Strike price: $"))
@@ -55,7 +79,8 @@ def get_user_inputs():
 
     # Resistance and earnings timing are entered manually by the user.
     resistance_price = float(input("Estimated resistance price: $"))
-    days_until_earnings = int(input("Days until earnings: "))
+    if earnings_data_source == "Manual":
+        days_until_earnings = int(input("Days until earnings: "))
 
     # return sends these values back to the line that called this function.
     return (
@@ -76,6 +101,8 @@ def get_user_inputs():
         ma200,
         resistance_price,
         days_until_earnings,
+        next_earnings_date,
+        earnings_data_source,
     )
 
 
@@ -381,6 +408,8 @@ def display_results(
     resistance_price,
     price_vs_resistance,
     days_until_earnings,
+    next_earnings_date,
+    earnings_data_source,
 ):
     """Display the trade details and calculated results."""
 
@@ -438,6 +467,13 @@ def display_results(
         days_to_expiration,
     )
     print(f"Earnings Risk:        {earnings_risk}")
+    if earnings_data_source == "Retrieved":
+        print(f"Next Earnings Date:   {next_earnings_date.isoformat()}")
+        print(f"Days Until Earnings:  {days_until_earnings}")
+        print("Earnings data:        Retrieved automatically")
+        print("Earnings dates can change; verify before placing a real trade.")
+    else:
+        print("Earnings data:        Manual entry")
 
     # Each checklist item is informational and is displayed independently.
     checklist = create_trade_checklist(
@@ -482,6 +518,8 @@ def main():
         ma200,
         resistance_price,
         days_until_earnings,
+        next_earnings_date,
+        earnings_data_source,
     ) = get_user_inputs()
 
     # Check all inputs before using them in calculations.
@@ -566,6 +604,8 @@ def main():
         resistance_price,
         price_vs_resistance,
         days_until_earnings,
+        next_earnings_date,
+        earnings_data_source,
     )
 
 
