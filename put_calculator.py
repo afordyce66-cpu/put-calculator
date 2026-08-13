@@ -1,5 +1,7 @@
 """Calculate the basic numbers for a cash-secured put option."""
 
+from market_data import get_market_data
+
 
 # This function asks the user for the trade and volatility information.
 # It converts prices and percentages to decimal numbers and counts to whole
@@ -7,8 +9,31 @@
 def get_user_inputs():
     """Ask for and return the details of the put option trade."""
 
-    # input() returns text, and float() converts that text to a decimal number.
-    stock_price = float(input("Stock price: $"))
+    # Try to retrieve the latest available close and moving averages first.
+    ticker = input("Ticker symbol: ").strip().upper()
+    try:
+        market_data = get_market_data(ticker)
+        ticker = market_data["ticker"]
+        stock_price = float(market_data["stock_price"])
+        ma50 = float(market_data["ma50"])
+        ma200 = float(market_data["ma200"])
+        market_data_source = "Retrieved"
+
+        print("\nMarket data retrieved automatically:")
+        print(f"Ticker:               {ticker}")
+        print(f"Latest closing price: ${stock_price:,.2f}")
+        print(f"50-Day MA:            ${ma50:,.2f}")
+        print(f"200-Day MA:           ${ma200:,.2f}")
+    except Exception:
+        # Any provider, connection, ticker, or data-format problem uses fallback.
+        print("\nAutomatic market data unavailable.")
+        print("Switching to manual entry.")
+        stock_price = float(input("Stock price: $"))
+        ma50 = float(input("50-day moving average: $"))
+        ma200 = float(input("200-day moving average: $"))
+        market_data_source = "Manual"
+
+    # input() returns text, and float() converts it to a decimal number.
     strike_price = float(input("Strike price: $"))
     premium_received = float(input("Premium received per share: $"))
 
@@ -27,8 +52,6 @@ def get_user_inputs():
 
     # These prices provide technical context entered by the user.
     support_price = float(input("Estimated support price: $"))
-    ma50 = float(input("50-day moving average: $"))
-    ma200 = float(input("200-day moving average: $"))
 
     # Resistance and earnings timing are entered manually by the user.
     resistance_price = float(input("Estimated resistance price: $"))
@@ -36,6 +59,8 @@ def get_user_inputs():
 
     # return sends these values back to the line that called this function.
     return (
+        ticker,
+        market_data_source,
         stock_price,
         strike_price,
         premium_received,
@@ -330,6 +355,8 @@ def calculate_put_results(
 # Keeping display code separate makes the calculation function easier to reuse.
 # The formatting after each colon controls commas and decimal places.
 def display_results(
+    ticker,
+    market_data_source,
     stock_price,
     strike_price,
     days_to_expiration,
@@ -361,6 +388,8 @@ def display_results(
     print("\n--- Cash-Secured Put Results ---")
 
     # f-strings insert variable values wherever braces appear.
+    print(f"Ticker:               {ticker}")
+    print(f"Market data source:   {market_data_source}")
     print(f"Current stock price:  ${stock_price:,.2f}")
     print(f"Days to expiration:   {days_to_expiration}")
     print(f"Maximum profit:       ${maximum_profit:,.2f}")
@@ -436,6 +465,8 @@ def main():
 
     # Unpack the returned values into clearly named variables.
     (
+        ticker,
+        market_data_source,
         stock_price,
         strike_price,
         premium_received,
@@ -509,6 +540,8 @@ def main():
 
     # Pass the input context and calculated values to the display function.
     display_results(
+        ticker,
+        market_data_source,
         stock_price,
         strike_price,
         days_to_expiration,
