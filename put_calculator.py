@@ -29,6 +29,10 @@ def get_user_inputs():
     ma50 = float(input("50-day moving average: $"))
     ma200 = float(input("200-day moving average: $"))
 
+    # Resistance and earnings timing are entered manually by the user.
+    resistance_price = float(input("Estimated resistance price: $"))
+    days_until_earnings = int(input("Days until earnings: "))
+
     # return sends these values back to the line that called this function.
     return (
         stock_price,
@@ -43,6 +47,8 @@ def get_user_inputs():
         support_price,
         ma50,
         ma200,
+        resistance_price,
+        days_until_earnings,
     )
 
 
@@ -61,6 +67,8 @@ def validate_inputs(
     support_price,
     ma50,
     ma200,
+    resistance_price,
+    days_until_earnings,
 ):
     """Raise an error if any input is outside its allowed range."""
 
@@ -92,6 +100,12 @@ def validate_inputs(
         raise ValueError("Support price must be greater than zero.")
     if ma50 <= 0 or ma200 <= 0:
         raise ValueError("Moving averages must be greater than zero.")
+    if resistance_price <= 0:
+        raise ValueError("Resistance price must be greater than zero.")
+
+    # Zero means earnings are today; negative days are not allowed.
+    if days_until_earnings < 0:
+        raise ValueError("Days until earnings must be zero or greater.")
 
 
 # This function calculates where current IV sits in its 52-week range.
@@ -108,19 +122,24 @@ def calculate_technical_context(
     support_price,
     ma50,
     ma200,
+    resistance_price,
 ):
-    """Calculate distances from support and the moving averages."""
+    """Calculate distances from technical price levels."""
 
     support_distance = ((stock_price - support_price) / support_price) * 100
     strike_vs_support = ((support_price - strike_price) / support_price) * 100
     ma50_distance = ((stock_price - ma50) / ma50) * 100
     ma200_distance = ((stock_price - ma200) / ma200) * 100
+    price_vs_resistance = (
+        (stock_price - resistance_price) / resistance_price
+    ) * 100
 
     return (
         support_distance,
         strike_vs_support,
         ma50_distance,
         ma200_distance,
+        price_vs_resistance,
     )
 
 
@@ -146,6 +165,24 @@ def describe_strike_position(strike_vs_support):
     if strike_vs_support > 0:
         return "below support"
     return "above support"
+
+
+# Resistance uses special wording when the stock is at the resistance price.
+def describe_resistance_position(price_vs_resistance):
+    """Describe whether the stock is below, at, or above resistance."""
+
+    if abs(price_vs_resistance) < 0.01:
+        return "at resistance"
+    return describe_price_position(price_vs_resistance)
+
+
+# This helper compares the manually entered earnings timing with option DTE.
+def describe_earnings_risk(days_until_earnings, days_to_expiration):
+    """Return an informational warning about earnings timing."""
+
+    if days_until_earnings <= days_to_expiration:
+        return "WARNING - Earnings occur before option expiration."
+    return "Clear - Earnings occur after option expiration."
 
 
 # This function performs all seven requested calculations.
@@ -227,6 +264,9 @@ def display_results(
     ma50_distance,
     ma200,
     ma200_distance,
+    resistance_price,
+    price_vs_resistance,
+    days_until_earnings,
 ):
     """Display the trade details and calculated results."""
 
@@ -265,6 +305,22 @@ def display_results(
         f"Price vs 200-Day MA:  {abs(ma200_distance):.2f}% "
         f"{describe_price_position(ma200_distance)}"
     )
+    print(f"Resistance Price:     ${resistance_price:,.2f}")
+
+    resistance_position = describe_resistance_position(price_vs_resistance)
+    if resistance_position == "at resistance":
+        print("Price vs Resistance:  at resistance")
+    else:
+        print(
+            f"Price vs Resistance:  {abs(price_vs_resistance):.2f}% "
+            f"{resistance_position}"
+        )
+
+    earnings_risk = describe_earnings_risk(
+        days_until_earnings,
+        days_to_expiration,
+    )
+    print(f"Earnings Risk:        {earnings_risk}")
 
 
 # This is the main function: it coordinates the other functions in order.
@@ -287,6 +343,8 @@ def main():
         support_price,
         ma50,
         ma200,
+        resistance_price,
+        days_until_earnings,
     ) = get_user_inputs()
 
     # Check all inputs before using them in calculations.
@@ -302,6 +360,8 @@ def main():
         support_price,
         ma50,
         ma200,
+        resistance_price,
+        days_until_earnings,
     )
 
     # Run the formulas and unpack the seven returned results.
@@ -330,12 +390,14 @@ def main():
         strike_vs_support,
         ma50_distance,
         ma200_distance,
+        price_vs_resistance,
     ) = calculate_technical_context(
         stock_price,
         strike_price,
         support_price,
         ma50,
         ma200,
+        resistance_price,
     )
 
     # Pass the input context and calculated values to the display function.
@@ -359,6 +421,9 @@ def main():
         ma50_distance,
         ma200,
         ma200_distance,
+        resistance_price,
+        price_vs_resistance,
+        days_until_earnings,
     )
 
 
