@@ -251,6 +251,123 @@ def describe_earnings_risk(days_until_earnings, days_to_expiration):
     return "Clear - Earnings occur after option expiration."
 
 
+# These helpers build a simple technical snapshot from existing market data.
+def calculate_percent_from_average(stock_price, moving_average):
+    """Calculate how far price is above or below a moving average."""
+
+    return ((stock_price - moving_average) / moving_average) * 100
+
+
+def classify_trend(percent_from_average):
+    """Classify price using a transparent plus-or-minus 2% range."""
+
+    if percent_from_average > 2:
+        return "Bullish"
+    if percent_from_average < -2:
+        return "Bearish"
+    return "Neutral"
+
+
+def classify_earnings_risk(days_until_earnings):
+    """Classify near-term earnings timing without making a recommendation."""
+
+    if days_until_earnings is None:
+        return "UNKNOWN - verify manually"
+    if days_until_earnings <= 7:
+        return "HIGH earnings risk"
+    if days_until_earnings <= 21:
+        return "CAUTION"
+    return "Lower near-term earnings risk"
+
+
+def build_market_snapshot(
+    stock_price,
+    ma50,
+    ma200,
+    next_earnings_date,
+    days_until_earnings,
+    earnings_data_source,
+):
+    """Return the calculated values used by the Market Snapshot."""
+
+    price_vs_ma50 = calculate_percent_from_average(stock_price, ma50)
+    price_vs_ma200 = calculate_percent_from_average(stock_price, ma200)
+
+    return {
+        "stock_price": stock_price,
+        "ma50": ma50,
+        "ma200": ma200,
+        "price_vs_ma50": price_vs_ma50,
+        "price_vs_ma200": price_vs_ma200,
+        "short_term_trend": classify_trend(price_vs_ma50),
+        "long_term_trend": classify_trend(price_vs_ma200),
+        "next_earnings_date": next_earnings_date,
+        "days_until_earnings": days_until_earnings,
+        "earnings_source": earnings_data_source.lower(),
+        "earnings_risk": classify_earnings_risk(
+            days_until_earnings if next_earnings_date is not None else None
+        ),
+    }
+
+
+def build_put_seller_view(snapshot):
+    """Return plain-English market context for a novice put seller."""
+
+    if snapshot["price_vs_ma50"] > 0:
+        ma50_message = "✓ Price is above the 50-day moving average"
+    else:
+        ma50_message = "⚠ Price is below the 50-day moving average"
+
+    if snapshot["price_vs_ma200"] > 2:
+        ma200_message = "✓ Price is above the 200-day moving average"
+    else:
+        ma200_message = "⚠ Price is near or below the 200-day moving average"
+
+    days_until_earnings = snapshot["days_until_earnings"]
+    if snapshot["next_earnings_date"] is None:
+        earnings_message = "⚠ Earnings date is unknown"
+    elif days_until_earnings <= 21:
+        earnings_message = "⚠ Earnings are within 21 days"
+    else:
+        earnings_message = "✓ Earnings are more than 21 days away"
+
+    return (ma50_message, ma200_message, earnings_message)
+
+
+def display_market_snapshot(snapshot):
+    """Print the Market Snapshot and informational Put Seller View."""
+
+    print("\nMARKET SNAPSHOT")
+    print(f"Current price:        ${snapshot['stock_price']:,.2f}")
+    print(f"50-day average:       ${snapshot['ma50']:,.2f}")
+    print(f"200-day average:      ${snapshot['ma200']:,.2f}")
+    print(
+        f"Price vs 50-day:      {abs(snapshot['price_vs_ma50']):.2f}% "
+        f"{describe_price_position(snapshot['price_vs_ma50'])}"
+    )
+    print(
+        f"Price vs 200-day:     {abs(snapshot['price_vs_ma200']):.2f}% "
+        f"{describe_price_position(snapshot['price_vs_ma200'])}"
+    )
+    print(f"Short-term trend:     {snapshot['short_term_trend']}")
+    print(f"Long-term trend:      {snapshot['long_term_trend']}")
+
+    next_earnings_date = snapshot["next_earnings_date"]
+    if next_earnings_date is None:
+        print("Next earnings:        Unknown")
+        print("Days until earnings: Unknown")
+    else:
+        print(f"Next earnings:        {next_earnings_date.isoformat()}")
+        print(f"Days until earnings:  {snapshot['days_until_earnings']}")
+    print(f"Earnings source:      {snapshot['earnings_source']}")
+    print(f"Earnings risk level:  {snapshot['earnings_risk']}")
+    print("Technical classifications are informational, not predictions.")
+
+    print("\nPUT SELLER VIEW")
+    for message in build_put_seller_view(snapshot):
+        print(message)
+
+
 # This function creates independent, informational checklist messages.
 def create_trade_checklist(
     delta,
@@ -491,6 +608,17 @@ def display_results(
     print("\n--- Informational Trade Checklist ---")
     for checklist_item in checklist:
         print(checklist_item)
+
+    # Reuse the existing values; no additional market-data request is made.
+    snapshot = build_market_snapshot(
+        stock_price,
+        ma50,
+        ma200,
+        next_earnings_date,
+        days_until_earnings,
+        earnings_data_source,
+    )
+    display_market_snapshot(snapshot)
 
 
 # This is the main function: it coordinates the other functions in order.

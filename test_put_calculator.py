@@ -1,12 +1,20 @@
 """Automated tests for the cash-secured put calculator."""
 
+from contextlib import redirect_stdout
+from datetime import date
+from io import StringIO
 import unittest
 
 from put_calculator import (
     calculate_iv_rank,
     calculate_put_results,
     calculate_technical_context,
+    build_market_snapshot,
+    build_put_seller_view,
+    classify_earnings_risk,
+    classify_trend,
     create_trade_checklist,
+    display_market_snapshot,
     earnings_occur_during_trade,
     validate_inputs,
 )
@@ -184,6 +192,65 @@ class PutCalculatorTests(unittest.TestCase):
     def test_trend_check_review(self):
         checklist = self.make_checklist(stock_price=23, ma50=24, ma200=21)
         self.assertIn("Trend Check: REVIEW", checklist[5])
+
+    def test_trend_more_than_two_percent_above_is_bullish(self):
+        self.assertEqual(classify_trend(2.01), "Bullish")
+
+    def test_trend_within_two_percent_is_neutral(self):
+        for distance in (-2, 0, 2):
+            with self.subTest(distance=distance):
+                self.assertEqual(classify_trend(distance), "Neutral")
+
+    def test_trend_more_than_two_percent_below_is_bearish(self):
+        self.assertEqual(classify_trend(-2.01), "Bearish")
+
+    def test_earnings_zero_to_seven_days_is_high_risk(self):
+        for days in (0, 7):
+            with self.subTest(days=days):
+                self.assertEqual(classify_earnings_risk(days), "HIGH earnings risk")
+
+    def test_earnings_eight_to_twenty_one_days_is_caution(self):
+        for days in (8, 21):
+            with self.subTest(days=days):
+                self.assertEqual(classify_earnings_risk(days), "CAUTION")
+
+    def test_earnings_more_than_twenty_one_days_is_lower_risk(self):
+        self.assertEqual(
+            classify_earnings_risk(22),
+            "Lower near-term earnings risk",
+        )
+
+    def test_unknown_earnings_date_is_unknown_risk(self):
+        self.assertEqual(
+            classify_earnings_risk(None),
+            "UNKNOWN - verify manually",
+        )
+
+    def test_snapshot_output_uses_automatic_market_values(self):
+        snapshot = build_market_snapshot(
+            25,
+            24,
+            21,
+            date(2026, 9, 27),
+            45,
+            "Retrieved",
+        )
+        output = StringIO()
+
+        with redirect_stdout(output):
+            display_market_snapshot(snapshot)
+
+        rendered = output.getvalue()
+        self.assertIn("Current price:        $25.00", rendered)
+        self.assertIn("50-day average:       $24.00", rendered)
+        self.assertIn("200-day average:      $21.00", rendered)
+        self.assertIn("Next earnings:        2026-09-27", rendered)
+        self.assertIn("Earnings source:      retrieved", rendered)
+        self.assertIn("PUT SELLER VIEW", rendered)
+
+    def test_put_seller_view_warns_when_earnings_date_is_unknown(self):
+        snapshot = build_market_snapshot(25, 24, 21, None, 45, "Manual")
+        self.assertIn("⚠ Earnings date is unknown", build_put_seller_view(snapshot))
 
 
 if __name__ == "__main__":
