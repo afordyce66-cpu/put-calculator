@@ -4,6 +4,7 @@ from datetime import date
 
 from market_data import get_market_data
 from option_chain import OptionChainError, get_put_contract
+from trade_score import build_trade_quality_score
 
 
 # This function asks the user for the trade and volatility information.
@@ -14,17 +15,33 @@ def get_user_inputs():
 
     # Try to retrieve the latest available close and moving averages first.
     ticker = input("Ticker symbol: ").strip().upper()
+    next_earnings_date = None
+    days_until_earnings = None
     try:
         market_data = get_market_data(ticker)
         ticker = market_data["ticker"]
-        stock_price = float(market_data["stock_price"])
-        ma50 = float(market_data["ma50"])
-        ma200 = float(market_data["ma200"])
+
+        stock_price_value = market_data.get("stock_price")
+        ma50_value = market_data.get("ma50")
+        ma200_value = market_data.get("ma200")
+        if not isinstance(stock_price_value, (int, float)):
+            raise ValueError("Retrieved stock price was unavailable.")
+        if not isinstance(ma50_value, (int, float)):
+            raise ValueError("Retrieved 50-day average was unavailable.")
+        if not isinstance(ma200_value, (int, float)):
+            raise ValueError("Retrieved 200-day average was unavailable.")
+
+        stock_price = float(stock_price_value)
+        ma50 = float(ma50_value)
+        ma200 = float(ma200_value)
         market_data_source = "Retrieved"
 
         try:
             next_earnings_date = market_data.get("next_earnings_date")
-            days_until_earnings = int(market_data.get("days_until_earnings"))
+            days_until_earnings_value = market_data.get("days_until_earnings")
+            if not isinstance(days_until_earnings_value, (int, float)):
+                raise ValueError("Retrieved earnings timing was unavailable.")
+            days_until_earnings = int(days_until_earnings_value)
             if not isinstance(next_earnings_date, date):
                 raise ValueError("The retrieved earnings date was malformed.")
             if days_until_earnings < 0:
@@ -40,7 +57,10 @@ def get_user_inputs():
         print(f"Latest closing price: ${stock_price:,.2f}")
         print(f"50-Day MA:            ${ma50:,.2f}")
         print(f"200-Day MA:           ${ma200:,.2f}")
-        if earnings_data_source == "Retrieved":
+        if (
+            earnings_data_source == "Retrieved"
+            and isinstance(next_earnings_date, date)
+        ):
             print(f"Next Earnings Date:   {next_earnings_date.isoformat()}")
             print(f"Days Until Earnings:  {days_until_earnings}")
     except Exception:
@@ -278,6 +298,14 @@ def describe_earnings_risk(days_until_earnings, days_to_expiration):
     return "Clear - Earnings occur after option expiration."
 
 
+def require_number(value: object, field_name: str) -> float:
+    """Return a numeric internal value after explicit type narrowing."""
+
+    if isinstance(value, (int, float)):
+        return float(value)
+    raise ValueError(f"{field_name} must be a number.")
+
+
 # These helpers build a simple technical snapshot from existing market data.
 def calculate_percent_from_average(stock_price, moving_average):
     """Calculate how far price is above or below a moving average."""
@@ -364,17 +392,26 @@ def build_put_seller_view(snapshot):
 def display_market_snapshot(snapshot):
     """Print the Market Snapshot and informational Put Seller View."""
 
+    price_vs_ma50 = require_number(
+        snapshot["price_vs_ma50"],
+        "Price versus 50-day average",
+    )
+    price_vs_ma200 = require_number(
+        snapshot["price_vs_ma200"],
+        "Price versus 200-day average",
+    )
+
     print("\nMARKET SNAPSHOT")
     print(f"Current price:        ${snapshot['stock_price']:,.2f}")
     print(f"50-day average:       ${snapshot['ma50']:,.2f}")
     print(f"200-day average:      ${snapshot['ma200']:,.2f}")
     print(
-        f"Price vs 50-day:      {abs(snapshot['price_vs_ma50']):.2f}% "
-        f"{describe_price_position(snapshot['price_vs_ma50'])}"
+        f"Price vs 50-day:      {abs(price_vs_ma50):.2f}% "
+        f"{describe_price_position(price_vs_ma50)}"
     )
     print(
-        f"Price vs 200-day:     {abs(snapshot['price_vs_ma200']):.2f}% "
-        f"{describe_price_position(snapshot['price_vs_ma200'])}"
+        f"Price vs 200-day:     {abs(price_vs_ma200):.2f}% "
+        f"{describe_price_position(price_vs_ma200)}"
     )
     print(f"Short-term trend:     {snapshot['short_term_trend']}")
     print(f"Long-term trend:      {snapshot['long_term_trend']}")
@@ -567,7 +604,10 @@ def build_contract_risk_checklist(analysis):
 def display_option_candidate_analysis(analysis):
     """Print the option candidate analysis and contract risk checklist."""
 
-    strike_distance = analysis["strike_distance"]
+    strike_distance = require_number(
+        analysis["strike_distance"],
+        "Strike distance",
+    )
     strike_position = "below" if strike_distance >= 0 else "above"
 
     print("\nOPTION CANDIDATE ANALYSIS")
@@ -597,10 +637,12 @@ def display_option_candidate_analysis(analysis):
     )
     print(f"Earnings context:        {analysis['earnings_context']}")
 
-    if analysis["delta"] is None:
+    analysis_delta = analysis["delta"]
+    if analysis_delta is None:
         print("Delta:                  Unknown - enter manually if available")
     else:
-        print(f"Delta:                   {abs(analysis['delta']):.2f}")
+        delta_value = require_number(analysis_delta, "Delta")
+        print(f"Delta:                   {abs(delta_value):.2f}")
         print(f"Delta context:           {analysis['delta_context']}")
     print(
         "Delta is not an exact assignment probability and changes with price, "
@@ -680,6 +722,31 @@ def display_option_contract_snapshot(option_data, manual_delta):
     for message in option_data["liquidity_context"]:
         print(f"Liquidity context:      {message}")
     print("Manual premium remains in use for all calculator return calculations.")
+
+
+def display_trade_quality_scorecard(scorecard):
+    """Print a transparent educational score and its component explanations."""
+
+    print("\nTRADE QUALITY SCORECARD")
+    for name, result in scorecard["components"].items():
+        print(
+            f"{name + ':':<22}{result['points']:>2} / {result['maximum']:<2}  "
+            f"{result['detail']}"
+        )
+
+    print(f"\nTOTAL:                {scorecard['total']} / 100")
+    print(f"ASSESSMENT:           {scorecard['assessment']}")
+
+    if scorecard["concerns"]:
+        print("\nKey concerns:")
+        for concern in scorecard["concerns"]:
+            print(f"- {concern}")
+    if scorecard["positive_factors"]:
+        print("\nPositive factors:")
+        for factor in scorecard["positive_factors"]:
+            print(f"- {factor}")
+
+    print("\nEducational screening only - not a prediction of profit or safety.")
 
 
 def select_effective_delta(option_data, manual_delta):
@@ -971,6 +1038,31 @@ def display_results(
         snapshot,
     )
     display_option_candidate_analysis(analysis)
+
+    spread_percentage = None
+    open_interest = None
+    volume = None
+    if option_contract_data is not None:
+        spread_percentage = option_contract_data["spread_percentage"]
+        open_interest = option_contract_data["contract"]["open_interest"]
+        volume = option_contract_data["contract"]["volume"]
+
+    scorecard = build_trade_quality_score(
+        days_to_expiration,
+        analysis_delta,
+        strike_cushion,
+        breakeven_cushion,
+        stock_price,
+        ma50,
+        ma200,
+        iv_rank,
+        days_until_earnings,
+        earnings_data_source,
+        spread_percentage,
+        open_interest,
+        volume,
+    )
+    display_trade_quality_scorecard(scorecard)
 
 
 # This is the main function: it coordinates the other functions in order.
