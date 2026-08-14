@@ -3,6 +3,7 @@
 from datetime import date
 
 from market_data import get_market_data
+from option_chain import OptionChainError, get_put_contract
 
 
 # This function asks the user for the trade and volatility information.
@@ -84,6 +85,29 @@ def get_user_inputs():
     if earnings_data_source == "Manual":
         days_until_earnings = int(input("Days until earnings: "))
 
+    # Option-chain lookup is optional and never replaces manual trade inputs.
+    try:
+        option_choice = input(
+            "Retrieve automatic put option data? (y/N): "
+        ).strip().lower()
+    except (EOFError, StopIteration):
+        # This also preserves compatibility with older scripted input sequences.
+        option_choice = ""
+
+    option_contract_data = None
+    if option_choice in ("y", "yes"):
+        try:
+            option_contract_data = get_put_contract(
+                ticker,
+                days_to_expiration,
+                strike_price,
+            )
+            print("Automatic option-chain data retrieved.")
+            print("Manual strike and premium remain the calculator inputs.")
+        except Exception as error:
+            print(f"Automatic option data unavailable: {error}")
+            print("Continuing with the existing manual workflow.")
+
     # return sends these values back to the line that called this function.
     return (
         ticker,
@@ -105,6 +129,7 @@ def get_user_inputs():
         days_until_earnings,
         next_earnings_date,
         earnings_data_source,
+        option_contract_data,
     )
 
 
@@ -566,6 +591,85 @@ def display_option_candidate_analysis(analysis):
         print(message)
 
 
+def format_optional_money(value):
+    """Format an optional provider price for beginner-friendly output."""
+
+    return "Unavailable" if value is None else f"${value:,.2f}"
+
+
+def display_option_contract_snapshot(option_data, manual_delta):
+    """Print normalized option data without changing manual calculator inputs."""
+
+    if option_data is None:
+        return
+
+    contract = option_data["contract"]
+    print("\nOPTION CONTRACT SNAPSHOT")
+    print(f"Ticker:                 {option_data['ticker']}")
+    print(f"Requested DTE:          {option_data['requested_dte']}")
+    print(f"Expiration selected:    {option_data['expiration_date'].isoformat()}")
+    print(f"Actual DTE:             {option_data['actual_dte']}")
+    print(f"Requested strike:       ${option_data['requested_strike']:,.2f}")
+    print(f"Listed strike selected: ${contract['strike']:,.2f}")
+    if contract["strike"] != option_data["requested_strike"]:
+        print("The listed strike differs from the requested calculator strike.")
+
+    print(f"Bid:                    {format_optional_money(contract['bid'])}")
+    print(f"Ask:                    {format_optional_money(contract['ask'])}")
+    print(f"Midpoint:               {format_optional_money(option_data['midpoint'])}")
+    print(f"Last price:             {format_optional_money(contract['last_price'])}")
+
+    if option_data["spread"] is None:
+        print("Bid/ask spread:         Unavailable")
+    else:
+        print(
+            f"Bid/ask spread:         ${option_data['spread']:.2f} "
+            f"({option_data['spread_percentage']:.1f}% of midpoint)"
+        )
+    print(f"Spread context:         {option_data['spread_context']}")
+    print("The midpoint is descriptive and is not a guaranteed fill price.")
+
+    contract_iv = contract["implied_volatility"]
+    if contract_iv is None:
+        print("Contract IV:            Unavailable")
+    else:
+        print(f"Contract IV:            {contract_iv * 100:.1f}%")
+    print(
+        "Volume:                 "
+        + ("Unavailable" if contract["volume"] is None else f"{contract['volume']:.0f}")
+    )
+    print(
+        "Open interest:          "
+        + (
+            "Unavailable"
+            if contract["open_interest"] is None
+            else f"{contract['open_interest']:.0f}"
+        )
+    )
+
+    provider_delta = contract["delta"]
+    if provider_delta is not None:
+        print(f"Delta:                  {provider_delta:.2f} (provider value)")
+    elif manual_delta is not None:
+        print(f"Delta:                  {manual_delta:.2f} (manually entered)")
+    else:
+        print("Delta:                  Unknown")
+
+    for message in option_data["liquidity_context"]:
+        print(f"Liquidity context:      {message}")
+    print("Manual premium remains in use for all calculator return calculations.")
+
+
+def select_effective_delta(option_data, manual_delta):
+    """Use provider Delta only when the normalized contract actually has it."""
+
+    if option_data is not None:
+        provider_delta = option_data["contract"].get("delta")
+        if provider_delta is not None:
+            return abs(provider_delta)
+    return manual_delta
+
+
 # This function creates independent, informational checklist messages.
 def create_trade_checklist(
     delta,
@@ -728,6 +832,7 @@ def display_results(
     days_until_earnings,
     next_earnings_date,
     earnings_data_source,
+    option_contract_data,
 ):
     """Display the trade details and calculated results."""
 
@@ -824,6 +929,10 @@ def display_results(
     )
     display_market_snapshot(snapshot)
 
+    display_option_contract_snapshot(option_contract_data, delta)
+
+    analysis_delta = select_effective_delta(option_contract_data, delta)
+
     analysis = build_option_candidate_analysis(
         stock_price,
         strike_price,
@@ -834,7 +943,7 @@ def display_results(
         days_to_expiration,
         cash_required,
         maximum_profit,
-        delta,
+        analysis_delta,
         days_until_earnings,
         next_earnings_date is not None,
         snapshot,
@@ -869,6 +978,7 @@ def main():
         days_until_earnings,
         next_earnings_date,
         earnings_data_source,
+        option_contract_data,
     ) = get_user_inputs()
 
     # Check all inputs before using them in calculations.
@@ -956,6 +1066,7 @@ def main():
         days_until_earnings,
         next_earnings_date,
         earnings_data_source,
+        option_contract_data,
     )
 
 
