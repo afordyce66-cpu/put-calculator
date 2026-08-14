@@ -65,8 +65,10 @@ def get_user_inputs():
     number_of_contracts = int(input("Number of contracts: "))
     days_to_expiration = int(input("Days to expiration: "))
 
-    # Delta is entered as an absolute decimal value, such as 0.20.
-    delta = float(input("Absolute put delta (0 to 1): "))
+    # Delta is optional. A conventional negative put delta is normalized to
+    # its magnitude so -0.20 and 0.20 receive the same informational context.
+    delta_entry = input("Put delta (optional; press Enter if unknown): ").strip()
+    delta = None if delta_entry == "" else abs(float(delta_entry))
 
     # IV percentages are entered as normal numbers, such as 45 for 45%.
     current_iv = float(input("Current IV percentage: "))
@@ -140,7 +142,7 @@ def validate_inputs(
         raise ValueError("Contracts and days to expiration must be greater than zero.")
 
     # The user enters the absolute value of delta, so it must be from 0 to 1.
-    if delta < 0 or delta > 1:
+    if delta is not None and (delta < 0 or delta > 1):
         raise ValueError("Delta must be between 0 and 1.")
 
     # IV Rank needs a high that is above the low. Equal values would cause
@@ -368,6 +370,202 @@ def display_market_snapshot(snapshot):
         print(message)
 
 
+# These helpers provide transparent context for one put option candidate.
+def calculate_strike_distance(stock_price, strike_price):
+    """Calculate strike distance as a percentage of the stock price."""
+
+    return ((stock_price - strike_price) / stock_price) * 100
+
+
+def calculate_breakeven_cushion(stock_price, breakeven_price):
+    """Calculate the percentage decline from stock price to breakeven."""
+
+    return ((stock_price - breakeven_price) / stock_price) * 100
+
+
+def classify_strike_distance(strike_distance):
+    """Describe how far the put strike is below the current stock price."""
+
+    if strike_distance < 0:
+        return "In-the-money strike - assignment exposure is higher"
+    if strike_distance < 2:
+        return "Very close to current price"
+    if strike_distance < 5:
+        return "Moderate distance below current price"
+    if strike_distance < 10:
+        return "Meaningful downside cushion"
+    return "Large distance below current price"
+
+
+def classify_delta(delta):
+    """Describe optional delta using its magnitude, not as a probability."""
+
+    if delta is None:
+        return "Unknown - enter manually if available"
+
+    delta_magnitude = abs(delta)
+    if delta_magnitude > 1:
+        raise ValueError("Delta magnitude must be between 0 and 1.")
+    if delta_magnitude <= 0.15:
+        return "Lower-delta / more conservative strike"
+    if delta_magnitude <= 0.25:
+        return "Moderate delta"
+    if delta_magnitude <= 0.35:
+        return "Higher assignment exposure"
+    return "Aggressive delta / materially higher assignment exposure"
+
+
+def classify_contract_earnings_risk(
+    days_until_earnings,
+    days_to_expiration,
+    earnings_date_known=True,
+):
+    """Compare earnings timing with the option expiration window."""
+
+    if not earnings_date_known or days_until_earnings is None:
+        return "UNKNOWN - verify earnings manually"
+    if days_until_earnings <= days_to_expiration:
+        return "HIGH EVENT RISK - earnings occur during the option contract"
+    if days_until_earnings <= days_to_expiration + 7:
+        return "CAUTION - earnings occur shortly after expiration"
+    return "No earnings event during the option contract"
+
+
+def build_option_candidate_analysis(
+    stock_price,
+    strike_price,
+    premium_received,
+    breakeven_price,
+    strike_distance,
+    breakeven_cushion,
+    days_to_expiration,
+    cash_required,
+    maximum_profit,
+    delta,
+    days_until_earnings,
+    earnings_date_known,
+    snapshot,
+):
+    """Build informational context while reusing existing calculations."""
+
+    return {
+        "stock_price": stock_price,
+        "strike_price": strike_price,
+        "premium_received": premium_received,
+        "breakeven_price": breakeven_price,
+        "strike_distance": strike_distance,
+        "breakeven_cushion": breakeven_cushion,
+        "days_to_expiration": days_to_expiration,
+        "cash_required": cash_required,
+        "maximum_profit": maximum_profit,
+        "strike_context": classify_strike_distance(strike_distance),
+        "delta": delta,
+        "delta_context": classify_delta(delta),
+        "earnings_context": classify_contract_earnings_risk(
+            days_until_earnings,
+            days_to_expiration,
+            earnings_date_known,
+        ),
+        "snapshot": snapshot,
+    }
+
+
+def build_contract_risk_checklist(analysis):
+    """Return independent risk-context messages without scoring the trade."""
+
+    messages = []
+    strike_distance = analysis["strike_distance"]
+    if strike_distance < 0:
+        messages.append("WARNING: Strike is above the current stock price")
+    elif strike_distance < 2:
+        messages.append("WARNING: Strike is very close to the current stock price")
+    else:
+        messages.append("CHECK: Strike is below the current stock price")
+
+    breakeven_cushion = analysis["breakeven_cushion"]
+    if breakeven_cushion >= 0:
+        messages.append(
+            f"CHECK: Breakeven provides {breakeven_cushion:.2f}% downside cushion"
+        )
+    else:
+        messages.append("WARNING: Breakeven is above the current stock price")
+
+    earnings_context = analysis["earnings_context"]
+    if earnings_context.startswith("UNKNOWN"):
+        messages.append("WARNING: Earnings date is unknown")
+    elif earnings_context.startswith("HIGH"):
+        messages.append("WARNING: Earnings occur before expiration")
+    elif earnings_context.startswith("CAUTION"):
+        messages.append("WARNING: Earnings occur shortly after expiration")
+    else:
+        messages.append("CHECK: Earnings are outside the option contract")
+
+    snapshot = analysis["snapshot"]
+    if snapshot["price_vs_ma50"] < 0:
+        messages.append("WARNING: Stock is below the 50-day moving average")
+    if snapshot["price_vs_ma200"] < 0:
+        messages.append("WARNING: Stock is below the 200-day moving average")
+    else:
+        messages.append("CHECK: Stock is above the 200-day moving average")
+
+    delta = analysis["delta"]
+    if delta is None:
+        messages.append("WARNING: Delta is unknown")
+    elif abs(delta) > 0.25:
+        messages.append("WARNING: Delta indicates higher assignment exposure")
+
+    return tuple(messages)
+
+
+def display_option_candidate_analysis(analysis):
+    """Print the option candidate analysis and contract risk checklist."""
+
+    strike_distance = analysis["strike_distance"]
+    strike_position = "below" if strike_distance >= 0 else "above"
+
+    print("\nOPTION CANDIDATE ANALYSIS")
+    print(f"Stock price:             ${analysis['stock_price']:,.2f}")
+    print(f"Put strike:              ${analysis['strike_price']:,.2f}")
+    print(
+        f"Strike distance:         {abs(strike_distance):.2f}% "
+        f"{strike_position} stock price"
+    )
+    print(f"Strike context:          {analysis['strike_context']}")
+    print(f"Premium per share:       ${analysis['premium_received']:,.2f}")
+    print(f"Breakeven price:         ${analysis['breakeven_price']:,.2f}")
+    print(f"Breakeven cushion:       {analysis['breakeven_cushion']:.2f}%")
+    print(f"Days to expiration:      {analysis['days_to_expiration']}")
+    print(f"Cash secured:            ${analysis['cash_required']:,.2f}")
+    print(f"Maximum premium:         ${analysis['maximum_profit']:,.2f}")
+
+    if analysis["breakeven_cushion"] >= 0:
+        print(
+            "Breakeven context:       Stock can decline approximately "
+            f"{analysis['breakeven_cushion']:.2f}% before reaching breakeven."
+        )
+    else:
+        print("Breakeven context:       Breakeven is currently above the stock price.")
+    print(
+        "Below breakeven, losses can become substantial if shares are assigned."
+    )
+    print(f"Earnings context:        {analysis['earnings_context']}")
+
+    if analysis["delta"] is None:
+        print("Delta:                  Unknown - enter manually if available")
+    else:
+        print(f"Delta:                   {abs(analysis['delta']):.2f}")
+        print(f"Delta context:           {analysis['delta_context']}")
+    print(
+        "Delta is not an exact assignment probability and changes with price, "
+        "volatility, and time."
+    )
+    print("Strike distance alone does not determine whether a trade is safe.")
+
+    print("\nCONTRACT RISK CHECKLIST")
+    for message in build_contract_risk_checklist(analysis):
+        print(message)
+
+
 # This function creates independent, informational checklist messages.
 def create_trade_checklist(
     delta,
@@ -383,8 +581,10 @@ def create_trade_checklist(
 ):
     """Return the six neutral trade-checklist messages."""
 
-    if 0.15 <= delta <= 0.30:
+    if delta is not None and 0.15 <= delta <= 0.30:
         delta_check = "Delta Check: PASS - Within common put-selling range."
+    elif delta is None:
+        delta_check = "Delta Check: REVIEW - Delta is unknown."
     else:
         delta_check = (
             "Delta Check: REVIEW - Outside the 0.15 to 0.30 reference range."
@@ -503,6 +703,7 @@ def display_results(
     market_data_source,
     stock_price,
     strike_price,
+    premium_received,
     days_to_expiration,
     maximum_profit,
     breakeven_price,
@@ -545,7 +746,10 @@ def display_results(
     print(f"Annualized return:    {annualized_return:.2f}%")
     print(f"Strike cushion:       {strike_cushion:.2f}%")
     print(f"Breakeven cushion:    {breakeven_cushion:.2f}%")
-    print(f"Delta:                {delta:.2f}")
+    if delta is None:
+        print("Delta:                Unknown")
+    else:
+        print(f"Delta:                {delta:.2f}")
     print(f"Current IV:           {current_iv:.2f}%")
     print(f"IV Rank:              {iv_rank:.2f}%")
     print(f"IV Percentile:        {iv_percentile:.2f}%")
@@ -619,6 +823,23 @@ def display_results(
         earnings_data_source,
     )
     display_market_snapshot(snapshot)
+
+    analysis = build_option_candidate_analysis(
+        stock_price,
+        strike_price,
+        premium_received,
+        breakeven_price,
+        strike_cushion,
+        breakeven_cushion,
+        days_to_expiration,
+        cash_required,
+        maximum_profit,
+        delta,
+        days_until_earnings,
+        next_earnings_date is not None,
+        snapshot,
+    )
+    display_option_candidate_analysis(analysis)
 
 
 # This is the main function: it coordinates the other functions in order.
@@ -710,6 +931,7 @@ def main():
         market_data_source,
         stock_price,
         strike_price,
+        premium_received,
         days_to_expiration,
         maximum_profit,
         breakeven_price,

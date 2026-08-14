@@ -4,18 +4,26 @@ from contextlib import redirect_stdout
 from datetime import date
 from io import StringIO
 import unittest
+from unittest.mock import patch
 
 from put_calculator import (
+    build_option_candidate_analysis,
     calculate_iv_rank,
+    calculate_breakeven_cushion,
     calculate_put_results,
+    calculate_strike_distance,
     calculate_technical_context,
     build_market_snapshot,
     build_put_seller_view,
     classify_earnings_risk,
+    classify_contract_earnings_risk,
+    classify_delta,
+    classify_strike_distance,
     classify_trend,
     create_trade_checklist,
     display_market_snapshot,
     earnings_occur_during_trade,
+    get_user_inputs,
     validate_inputs,
 )
 
@@ -121,6 +129,47 @@ class PutCalculatorTests(unittest.TestCase):
 
     def test_negative_delta_is_invalid(self):
         self.assert_invalid(delta=-0.01)
+
+    @patch("put_calculator.get_market_data")
+    @patch("builtins.input")
+    def test_blank_delta_is_stored_as_unknown(self, mock_input, mock_get):
+        """The existing delta prompt may be left blank."""
+
+        # These are the calculator's remaining manual inputs after the ticker.
+        inputs = [
+            "22", "0.60", "1", "30", "", "45", "25", "65", "65",
+            "22.50", "28", "45",
+        ]
+        mock_input.side_effect = ["SOFI"] + inputs
+        mock_get.return_value = {
+            "ticker": "SOFI",
+            "stock_price": 25.0,
+            "ma50": 24.0,
+            "ma200": 21.0,
+        }
+
+        self.assertIsNone(get_user_inputs()[7])
+
+    @patch("put_calculator.get_market_data")
+    @patch("builtins.input")
+    def test_negative_put_delta_is_normalized_to_magnitude(
+        self, mock_input, mock_get
+    ):
+        """A conventional negative put delta is accepted as its magnitude."""
+
+        inputs = [
+            "22", "0.60", "1", "30", "-0.20", "45", "25", "65", "65",
+            "22.50", "28", "45",
+        ]
+        mock_input.side_effect = ["SOFI"] + inputs
+        mock_get.return_value = {
+            "ticker": "SOFI",
+            "stock_price": 25.0,
+            "ma50": 24.0,
+            "ma200": 21.0,
+        }
+
+        self.assertEqual(get_user_inputs()[7], 0.20)
 
     def test_equal_iv_high_and_low_are_invalid(self):
         self.assert_invalid(iv_low=25, iv_high=25)
@@ -251,6 +300,96 @@ class PutCalculatorTests(unittest.TestCase):
     def test_put_seller_view_warns_when_earnings_date_is_unknown(self):
         snapshot = build_market_snapshot(25, 24, 21, None, 45, "Manual")
         self.assertIn("⚠ Earnings date is unknown", build_put_seller_view(snapshot))
+
+    def test_strike_less_than_two_percent_below_stock(self):
+        self.assertEqual(classify_strike_distance(1.99), "Very close to current price")
+
+    def test_strike_two_to_less_than_five_percent_below_stock(self):
+        self.assertEqual(
+            classify_strike_distance(2), "Moderate distance below current price"
+        )
+        self.assertEqual(
+            classify_strike_distance(4.99), "Moderate distance below current price"
+        )
+
+    def test_strike_five_to_less_than_ten_percent_below_stock(self):
+        self.assertEqual(classify_strike_distance(5), "Meaningful downside cushion")
+        self.assertEqual(
+            classify_strike_distance(9.99), "Meaningful downside cushion"
+        )
+
+    def test_strike_ten_percent_or_more_below_stock(self):
+        self.assertEqual(classify_strike_distance(10), "Large distance below current price")
+
+    def test_strike_above_stock_price(self):
+        self.assertIn("In-the-money", classify_strike_distance(-1))
+
+    def test_option_distance_and_breakeven_calculations(self):
+        breakeven = 22 - 0.60
+        self.assertAlmostEqual(breakeven, 21.40)
+        self.assertAlmostEqual(calculate_strike_distance(25, 22), 12.00)
+        self.assertAlmostEqual(calculate_breakeven_cushion(25, breakeven), 14.40)
+
+    def test_contract_earnings_during_option(self):
+        self.assertIn("HIGH EVENT RISK", classify_contract_earnings_risk(20, 30))
+
+    def test_contract_earnings_one_to_seven_days_after_expiration(self):
+        for days in (31, 37):
+            with self.subTest(days=days):
+                self.assertIn("CAUTION", classify_contract_earnings_risk(days, 30))
+
+    def test_contract_earnings_more_than_seven_days_after_expiration(self):
+        self.assertEqual(
+            classify_contract_earnings_risk(38, 30),
+            "No earnings event during the option contract",
+        )
+
+    def test_contract_earnings_unknown(self):
+        self.assertIn("UNKNOWN", classify_contract_earnings_risk(45, 30, False))
+
+    def test_delta_point_fifteen_boundary(self):
+        self.assertIn("Lower-delta", classify_delta(0.15))
+
+    def test_moderate_delta(self):
+        self.assertEqual(classify_delta(-0.20), "Moderate delta")
+
+    def test_higher_exposure_delta(self):
+        self.assertEqual(classify_delta(0.30), "Higher assignment exposure")
+
+    def test_aggressive_delta(self):
+        self.assertIn("Aggressive delta", classify_delta(0.40))
+
+    def test_blank_or_unknown_delta(self):
+        self.assertIn("Unknown", classify_delta(None))
+
+    def test_invalid_delta_classification_is_rejected(self):
+        with self.assertRaises(ValueError):
+            classify_delta(1.01)
+
+    def test_analysis_reuses_market_snapshot_and_existing_values(self):
+        snapshot = build_market_snapshot(
+            25, 24, 21, date(2026, 9, 27), 45, "Retrieved"
+        )
+        analysis = build_option_candidate_analysis(
+            25,
+            22,
+            0.60,
+            21.40,
+            12.00,
+            14.40,
+            30,
+            2200.00,
+            60.00,
+            0.20,
+            45,
+            True,
+            snapshot,
+        )
+
+        self.assertIs(analysis["snapshot"], snapshot)
+        self.assertEqual(analysis["breakeven_price"], 21.40)
+        self.assertEqual(analysis["cash_required"], 2200.00)
+        self.assertEqual(analysis["maximum_profit"], 60.00)
 
 
 if __name__ == "__main__":
