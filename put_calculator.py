@@ -443,12 +443,34 @@ def classify_delta(delta):
 def classify_contract_earnings_risk(
     days_until_earnings,
     days_to_expiration,
-    earnings_date_known=True,
+    earnings_source="Retrieved",
 ):
     """Compare earnings timing with the option expiration window."""
 
-    if not earnings_date_known or days_until_earnings is None:
+    # Accept the earlier Boolean argument form so existing callers remain valid.
+    if earnings_source is True:
+        earnings_source = "Retrieved"
+    elif earnings_source is False:
+        earnings_source = "Unknown"
+
+    if days_until_earnings is None or earnings_source == "Unknown":
         return "UNKNOWN - verify earnings manually"
+
+    if earnings_source == "Manual":
+        if days_until_earnings <= days_to_expiration:
+            return (
+                "MANUAL WARNING - earnings are estimated to be approximately "
+                f"{days_until_earnings} days away and may occur during or by "
+                f"this {days_to_expiration}-day option expiration. Verify the "
+                "earnings date independently."
+            )
+        return (
+            "MANUAL ESTIMATE - earnings are approximately "
+            f"{days_until_earnings} days away, which is after this "
+            f"{days_to_expiration}-day option expiration. Verify the earnings "
+            "date independently."
+        )
+
     if days_until_earnings <= days_to_expiration:
         return "HIGH EVENT RISK - earnings occur during the option contract"
     if days_until_earnings <= days_to_expiration + 7:
@@ -468,7 +490,7 @@ def build_option_candidate_analysis(
     maximum_profit,
     delta,
     days_until_earnings,
-    earnings_date_known,
+    earnings_source,
     snapshot,
 ):
     """Build informational context while reusing existing calculations."""
@@ -489,7 +511,7 @@ def build_option_candidate_analysis(
         "earnings_context": classify_contract_earnings_risk(
             days_until_earnings,
             days_to_expiration,
-            earnings_date_known,
+            earnings_source,
         ),
         "snapshot": snapshot,
     }
@@ -518,7 +540,7 @@ def build_contract_risk_checklist(analysis):
     earnings_context = analysis["earnings_context"]
     if earnings_context.startswith("UNKNOWN"):
         messages.append("WARNING: Earnings date is unknown")
-    elif earnings_context.startswith("HIGH"):
+    elif earnings_context.startswith(("HIGH", "MANUAL WARNING")):
         messages.append("WARNING: Earnings occur before expiration")
     elif earnings_context.startswith("CAUTION"):
         messages.append("WARNING: Earnings occur shortly after expiration")
@@ -945,7 +967,7 @@ def display_results(
         maximum_profit,
         analysis_delta,
         days_until_earnings,
-        next_earnings_date is not None,
+        earnings_data_source,
         snapshot,
     )
     display_option_candidate_analysis(analysis)

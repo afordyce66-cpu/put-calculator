@@ -391,6 +391,43 @@ class PutCalculatorTests(unittest.TestCase):
         self.assertEqual(analysis["cash_required"], 2200.00)
         self.assertEqual(analysis["maximum_profit"], 60.00)
 
+    def test_manual_earnings_after_expiration_is_used_and_labeled(self):
+        context = classify_contract_earnings_risk(45, 30, "Manual")
+        self.assertIn("MANUAL ESTIMATE", context)
+        self.assertIn("45 days", context)
+        self.assertIn("after this 30-day option expiration", context)
+        self.assertIn("Verify", context)
+
+    def test_manual_earnings_before_expiration_warns(self):
+        context = classify_contract_earnings_risk(20, 30, "Manual")
+        self.assertIn("MANUAL WARNING", context)
+        self.assertIn("during or by", context)
+
+    def test_manual_earnings_on_expiration_warns(self):
+        context = classify_contract_earnings_risk(30, 30, "Manual")
+        self.assertIn("MANUAL WARNING", context)
+        self.assertIn("30 days", context)
+
+    def test_no_earnings_information_remains_unknown(self):
+        context = classify_contract_earnings_risk(None, 30, "Unknown")
+        self.assertIn("UNKNOWN", context)
+
+    def test_manual_earnings_analysis_retains_unverified_source(self):
+        snapshot = build_market_snapshot(25, 24, 21, None, 45, "Manual")
+        analysis = build_option_candidate_analysis(
+            25, 22, 0.60, 21.40, 12.00, 14.40, 30, 2200.00, 60.00,
+            0.20, 45, "Manual", snapshot,
+        )
+        self.assertIn("MANUAL ESTIMATE", analysis["earnings_context"])
+        self.assertIn("independently", analysis["earnings_context"])
+
+    def test_automatic_earnings_analysis_remains_intact(self):
+        context = classify_contract_earnings_risk(20, 30, "Retrieved")
+        self.assertEqual(
+            context,
+            "HIGH EVENT RISK - earnings occur during the option contract",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
