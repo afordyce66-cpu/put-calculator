@@ -655,6 +655,91 @@ def display_option_candidate_analysis(analysis):
         print(message)
 
 
+def display_assignment_downside_scenarios(
+    stock_price,
+    strike_price,
+    premium_received,
+    number_of_contracts,
+    breakeven_price,
+    support_price=None,
+):
+    """Display assignment and downside scenario results for beginners."""
+
+    analysis = build_assignment_downside_analysis(
+        stock_price,
+        strike_price,
+        premium_received,
+        number_of_contracts,
+        breakeven_price,
+        support_price,
+    )
+
+    print("\nAssignment & Downside Scenarios")
+    print(
+        "Assignment means buying 100 shares per contract at the strike price. "
+        "The premium received lowers the effective cost basis."
+    )
+    print(
+        f"Total shares represented:   {analysis['total_shares']:.0f} shares "
+        f"({number_of_contracts} contract(s) x 100)"
+    )
+    print(
+        "Effective assigned cost basis per share: "
+        f"${analysis['effective_assigned_cost_basis']:.2f}"
+    )
+    print(
+        "Total effective stock basis if assigned: "
+        f"${analysis['total_effective_stock_basis']:,.2f}"
+    )
+    print(
+        "Maximum theoretical loss at $0: "
+        f"${analysis['maximum_theoretical_loss']:,.2f}"
+    )
+    print(
+        "Downside can greatly exceed the premium received if the stock falls "
+        "hard and shares are assigned."
+    )
+    print(
+        "Breakeven is not a guaranteed floor or protection level; it is the "
+        "point where expiration profit is zero."
+    )
+
+    scenario_labels = {
+        "strike": "Expiration P/L at strike price",
+        "breakeven": "Expiration P/L at breakeven price",
+        "current_minus_10_percent": "Expiration P/L at current price minus 10%",
+        "support": "Expiration P/L at support price",
+        "zero": "Expiration P/L at $0",
+    }
+
+    for key, label in scenario_labels.items():
+        value = analysis["scenario_prices"].get(key)
+        pl_value = analysis["scenario_results"].get(key)
+        if key == "support" and value is None:
+            print(f"{label}: Not available")
+            continue
+        if value is None:
+            print(f"{label}: Not available")
+            continue
+        if key == "zero":
+            print(f"{label}: ${pl_value:,.2f}")
+        elif key == "current_minus_10_percent":
+            print(
+                f"{label}: ${value:,.2f} scenario => "
+                f"${pl_value:,.2f}"
+            )
+        else:
+            print(
+                f"{label}: ${value:,.2f} scenario => "
+                f"${pl_value:,.2f}"
+            )
+
+    if support_price is None:
+        print("Support price: Not available")
+    else:
+        print(f"Support price: ${support_price:,.2f}")
+
+
 def format_optional_money(value):
     """Format an optional provider price for beginner-friendly output."""
 
@@ -888,6 +973,132 @@ def calculate_put_results(
     )
 
 
+def calculate_total_shares(number_of_contracts):
+    """Return the total shares represented by the put contracts."""
+
+    return number_of_contracts * 100
+
+
+def calculate_effective_assigned_cost_basis(strike_price, premium_received):
+    """Return the effective per-share cost basis after accounting for premium."""
+
+    return strike_price - premium_received
+
+
+def calculate_total_effective_stock_basis(
+    strike_price,
+    premium_received,
+    number_of_contracts,
+):
+    """Return the total effective stock basis if the contracts are assigned."""
+
+    return calculate_total_shares(number_of_contracts) * (
+        calculate_effective_assigned_cost_basis(strike_price, premium_received)
+    )
+
+
+def calculate_max_theoretical_loss(
+    strike_price,
+    premium_received,
+    number_of_contracts,
+):
+    """Return the worst-case loss if the stock falls to zero while assigned."""
+
+    return calculate_total_effective_stock_basis(
+        strike_price,
+        premium_received,
+        number_of_contracts,
+    )
+
+
+def calculate_put_expiration_pl(
+    stock_price_at_expiration,
+    strike_price,
+    premium_received,
+    number_of_contracts,
+):
+    """Calculate expiration profit/loss using cash-secured put payoff logic."""
+
+    if stock_price_at_expiration < 0:
+        raise ValueError("Scenario stock price cannot be negative.")
+
+    total_shares = calculate_total_shares(number_of_contracts)
+    premium_total = premium_received * total_shares
+
+    if stock_price_at_expiration >= strike_price:
+        return premium_total
+
+    intrinsic_loss = (strike_price - stock_price_at_expiration) * total_shares
+    return premium_total - intrinsic_loss
+
+
+def build_assignment_downside_analysis(
+    stock_price,
+    strike_price,
+    premium_received,
+    number_of_contracts,
+    breakeven_price,
+    support_price=None,
+):
+    """Return beginner-friendly assignment and downside scenario metrics."""
+
+    total_shares = calculate_total_shares(number_of_contracts)
+    effective_cost_basis = calculate_effective_assigned_cost_basis(
+        strike_price,
+        premium_received,
+    )
+    total_effective_stock_basis = calculate_total_effective_stock_basis(
+        strike_price,
+        premium_received,
+        number_of_contracts,
+    )
+    max_theoretical_loss = calculate_max_theoretical_loss(
+        strike_price,
+        premium_received,
+        number_of_contracts,
+    )
+
+    scenario_prices = {
+        "strike": strike_price,
+        "breakeven": breakeven_price,
+        "current_minus_10_percent": stock_price * 0.90,
+        "support": support_price,
+        "zero": 0.0,
+    }
+
+    scenario_results = {}
+    for name, price in scenario_prices.items():
+        if price is None:
+            scenario_results[name] = None
+        else:
+            scenario_results[name] = calculate_put_expiration_pl(
+                price,
+                strike_price,
+                premium_received,
+                number_of_contracts,
+            )
+
+    return {
+        "total_shares": total_shares,
+        "effective_assigned_cost_basis": effective_cost_basis,
+        "total_effective_stock_basis": total_effective_stock_basis,
+        "maximum_theoretical_loss": max_theoretical_loss,
+        "support_price": support_price,
+        "support_pl": (
+            None
+            if support_price is None
+            else calculate_put_expiration_pl(
+                support_price,
+                strike_price,
+                premium_received,
+                number_of_contracts,
+            )
+        ),
+        "scenario_prices": scenario_prices,
+        "scenario_results": scenario_results,
+    }
+
+
 # This function prints the original inputs and calculated results neatly.
 # Keeping display code separate makes the calculation function easier to reuse.
 # The formatting after each colon controls commas and decimal places.
@@ -897,6 +1108,7 @@ def display_results(
     stock_price,
     strike_price,
     premium_received,
+    number_of_contracts,
     days_to_expiration,
     maximum_profit,
     breakeven_price,
@@ -1038,6 +1250,14 @@ def display_results(
         snapshot,
     )
     display_option_candidate_analysis(analysis)
+    display_assignment_downside_scenarios(
+        stock_price,
+        strike_price,
+        premium_received,
+        number_of_contracts,
+        breakeven_price,
+        support_price,
+    )
 
     spread_percentage = None
     open_interest = None
@@ -1156,6 +1376,7 @@ def main():
         stock_price,
         strike_price,
         premium_received,
+        number_of_contracts,
         days_to_expiration,
         maximum_profit,
         breakeven_price,

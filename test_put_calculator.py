@@ -7,12 +7,18 @@ import unittest
 from unittest.mock import patch
 
 from put_calculator import (
+    build_assignment_downside_analysis,
     build_option_candidate_analysis,
+    calculate_effective_assigned_cost_basis,
     calculate_iv_rank,
     calculate_breakeven_cushion,
+    calculate_max_theoretical_loss,
+    calculate_put_expiration_pl,
     calculate_put_results,
     calculate_strike_distance,
     calculate_technical_context,
+    calculate_total_effective_stock_basis,
+    calculate_total_shares,
     build_market_snapshot,
     build_put_seller_view,
     classify_earnings_risk,
@@ -427,6 +433,79 @@ class PutCalculatorTests(unittest.TestCase):
             context,
             "HIGH EVENT RISK - earnings occur during the option contract",
         )
+
+
+class AssignmentScenarioTests(unittest.TestCase):
+    """Tests for assignment and downside educational scenario analysis."""
+
+    def test_assignment_metrics_for_single_contract(self):
+        self.assertEqual(calculate_total_shares(1), 100)
+        self.assertAlmostEqual(calculate_effective_assigned_cost_basis(22, 0.60), 21.40)
+        self.assertAlmostEqual(calculate_total_effective_stock_basis(22, 0.60, 1), 2140.00)
+        self.assertAlmostEqual(
+            calculate_max_theoretical_loss(22, 0.60, 1),
+            2140.00,
+        )
+
+    def test_expiration_pl_at_strike_price(self):
+        self.assertAlmostEqual(
+            calculate_put_expiration_pl(22, 22, 0.60, 1),
+            60.00,
+        )
+
+    def test_expiration_pl_at_breakeven_price(self):
+        self.assertAlmostEqual(
+            calculate_put_expiration_pl(21.40, 22, 0.60, 1),
+            0.00,
+        )
+
+    def test_expiration_pl_below_breakeven(self):
+        self.assertAlmostEqual(
+            calculate_put_expiration_pl(20.00, 22, 0.60, 1),
+            -140.00,
+        )
+
+    def test_expiration_pl_at_zero(self):
+        self.assertAlmostEqual(
+            calculate_put_expiration_pl(0.00, 22, 0.60, 1),
+            -2140.00,
+        )
+
+    def test_expiration_pl_multiple_contracts(self):
+        self.assertAlmostEqual(
+            calculate_put_expiration_pl(20.00, 22, 0.60, 3),
+            -420.00,
+        )
+
+    def test_zero_premium_sets_expected_values(self):
+        self.assertAlmostEqual(calculate_effective_assigned_cost_basis(22, 0), 22.00)
+        self.assertAlmostEqual(calculate_put_expiration_pl(20.00, 22, 0.00, 1), -200.00)
+
+    def test_negative_scenario_price_is_invalid(self):
+        with self.assertRaises(ValueError):
+            calculate_put_expiration_pl(-1.00, 22, 0.60, 1)
+
+    def test_support_unavailable_is_handled(self):
+        analysis = build_assignment_downside_analysis(
+            stock_price=25.00,
+            strike_price=22.00,
+            premium_received=0.60,
+            number_of_contracts=1,
+            breakeven_price=21.40,
+            support_price=None,
+        )
+        self.assertIsNone(analysis["support_price"])
+        self.assertIsNone(analysis["support_pl"])
+
+    def test_existing_version_7_put_calculations_are_preserved(self):
+        results = calculate_put_results(25, 22, 0.60, 1, 30)
+        self.assertAlmostEqual(results[0], 60.00)
+        self.assertAlmostEqual(results[1], 21.40)
+        self.assertAlmostEqual(results[2], 2200.00)
+        self.assertAlmostEqual(results[3], 2.727272727272727)
+        self.assertAlmostEqual(results[4], 33.18181818181818)
+        self.assertAlmostEqual(results[5], 12.00)
+        self.assertAlmostEqual(results[6], 14.400000000000004)
 
 
 if __name__ == "__main__":
