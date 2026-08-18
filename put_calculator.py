@@ -128,6 +128,27 @@ def get_user_inputs():
             print(f"Automatic option data unavailable: {error}")
             print("Continuing with the existing manual workflow.")
 
+    # Optional account inputs are kept fully independent from the trade logic.
+    try:
+        available_capital_entry = input(
+            "Available cash for cash-secured puts (optional; press Enter if unknown): "
+        ).strip()
+    except (EOFError, StopIteration):
+        available_capital_entry = ""
+    available_capital = None if available_capital_entry == "" else float(
+        available_capital_entry
+    )
+
+    try:
+        allocation_entry = input(
+            "Maximum percentage of capital allowed in one position (optional; press Enter if unknown): "
+        ).strip()
+    except (EOFError, StopIteration):
+        allocation_entry = ""
+    max_allocation_percentage = None if allocation_entry == "" else float(
+        allocation_entry
+    )
+
     # return sends these values back to the line that called this function.
     return (
         ticker,
@@ -150,6 +171,8 @@ def get_user_inputs():
         next_earnings_date,
         earnings_data_source,
         option_contract_data,
+        available_capital,
+        max_allocation_percentage,
     )
 
 
@@ -215,6 +238,21 @@ def validate_inputs(
 
 
 # This function calculates where current IV sits in its 52-week range.
+def validate_position_sizing_inputs(
+    available_capital=None,
+    max_allocation_percentage=None,
+):
+    """Validate optional account sizing inputs without breaking blank usage."""
+
+    if available_capital is not None and available_capital <= 0:
+        raise ValueError("Available capital must be greater than zero.")
+    if max_allocation_percentage is not None:
+        if max_allocation_percentage <= 0:
+            raise ValueError("Allocation percentage must be greater than zero.")
+        if max_allocation_percentage > 100:
+            raise ValueError("Allocation percentage cannot exceed 100%.")
+
+
 def calculate_iv_rank(current_iv, iv_low, iv_high):
     """Calculate and return IV Rank as a percentage."""
 
@@ -1099,6 +1137,275 @@ def build_assignment_downside_analysis(
     }
 
 
+def calculate_cash_collateral_required(strike_price, number_of_contracts):
+    """Return the cash required to secure the put position."""
+
+    return strike_price * 100 * number_of_contracts
+
+
+def calculate_collateral_percentage_of_capital(
+    available_capital,
+    collateral_required,
+):
+    """Return how much of available capital is tied up in the trade."""
+
+    if available_capital is None:
+        return None
+    if available_capital <= 0:
+        raise ValueError("Available capital must be greater than zero.")
+    return (collateral_required / available_capital) * 100
+
+
+def calculate_cash_remaining_after_position(
+    available_capital,
+    collateral_required,
+):
+    """Return cash left after securing the proposed position."""
+
+    if available_capital is None:
+        return None
+    if available_capital <= 0:
+        raise ValueError("Available capital must be greater than zero.")
+    return available_capital - collateral_required
+
+
+def calculate_allocation_limit_dollar_value(
+    available_capital,
+    max_allocation_percentage,
+):
+    """Return the dollar amount represented by the user's allocation limit."""
+
+    if available_capital is None or max_allocation_percentage is None:
+        return None
+    if available_capital <= 0:
+        raise ValueError("Available capital must be greater than zero.")
+    if max_allocation_percentage <= 0 or max_allocation_percentage > 100:
+        raise ValueError("Allocation percentage must be between 0 and 100.")
+    return available_capital * (max_allocation_percentage / 100)
+
+
+def calculate_max_contracts_by_cash(available_capital, strike_price):
+    """Return the largest whole number of contracts affordable with cash."""
+
+    if available_capital is None:
+        return None
+    if available_capital <= 0:
+        raise ValueError("Available capital must be greater than zero.")
+    return int(available_capital // (strike_price * 100))
+
+
+def calculate_max_contracts_by_allocation(
+    available_capital,
+    max_allocation_percentage,
+    strike_price,
+):
+    """Return the largest whole number of contracts allowed under the user's cap."""
+
+    if available_capital is None or max_allocation_percentage is None:
+        return None
+    allocation_limit = calculate_allocation_limit_dollar_value(
+        available_capital,
+        max_allocation_percentage,
+    )
+    return int(allocation_limit // (strike_price * 100))
+
+
+def contract_count_exceeds_cash_limit(
+    number_of_contracts,
+    available_capital,
+    strike_price,
+):
+    """See whether the proposed contract count exceeds cash availability."""
+
+    if available_capital is None:
+        return False
+    max_contracts = calculate_max_contracts_by_cash(available_capital, strike_price)
+    return number_of_contracts > max_contracts
+
+
+def contract_count_exceeds_allocation_limit(
+    number_of_contracts,
+    available_capital,
+    max_allocation_percentage,
+    strike_price,
+):
+    """See whether the proposed contract count exceeds the user's limit."""
+
+    if available_capital is None or max_allocation_percentage is None:
+        return False
+    max_contracts = calculate_max_contracts_by_allocation(
+        available_capital,
+        max_allocation_percentage,
+        strike_price,
+    )
+    return number_of_contracts > max_contracts
+
+
+def build_position_sizing_analysis(
+    strike_price,
+    number_of_contracts,
+    available_capital=None,
+    max_allocation_percentage=None,
+):
+    """Build optional position-sizing context for a beginner cash-secured put."""
+
+    validate_position_sizing_inputs(
+        available_capital=available_capital,
+        max_allocation_percentage=max_allocation_percentage,
+    )
+
+    collateral_required = calculate_cash_collateral_required(
+        strike_price,
+        number_of_contracts,
+    )
+
+    collateral_percentage = None
+    cash_remaining = None
+    allocation_limit_dollar_value = None
+    max_contracts_by_cash = None
+    max_contracts_by_allocation = None
+    exceeds_cash_limit = False
+    exceeds_allocation_limit = False
+
+    if available_capital is not None:
+        collateral_percentage = calculate_collateral_percentage_of_capital(
+            available_capital,
+            collateral_required,
+        )
+        cash_remaining = calculate_cash_remaining_after_position(
+            available_capital,
+            collateral_required,
+        )
+        max_contracts_by_cash = calculate_max_contracts_by_cash(
+            available_capital,
+            strike_price,
+        )
+        exceeds_cash_limit = contract_count_exceeds_cash_limit(
+            number_of_contracts,
+            available_capital,
+            strike_price,
+        )
+
+    if available_capital is not None and max_allocation_percentage is not None:
+        allocation_limit_dollar_value = calculate_allocation_limit_dollar_value(
+            available_capital,
+            max_allocation_percentage,
+        )
+        max_contracts_by_allocation = calculate_max_contracts_by_allocation(
+            available_capital,
+            max_allocation_percentage,
+            strike_price,
+        )
+        exceeds_allocation_limit = contract_count_exceeds_allocation_limit(
+            number_of_contracts,
+            available_capital,
+            max_allocation_percentage,
+            strike_price,
+        )
+
+    return {
+        "available_capital": available_capital,
+        "max_allocation_percentage": max_allocation_percentage,
+        "collateral_required": collateral_required,
+        "collateral_percentage": collateral_percentage,
+        "cash_remaining": cash_remaining,
+        "allocation_limit_dollar_value": allocation_limit_dollar_value,
+        "max_contracts_by_cash": max_contracts_by_cash,
+        "max_contracts_by_allocation": max_contracts_by_allocation,
+        "exceeds_cash_limit": exceeds_cash_limit,
+        "exceeds_allocation_limit": exceeds_allocation_limit,
+    }
+
+
+def display_position_sizing_section(position_sizing):
+    """Print educational position sizing and account concentration information."""
+
+    print("\nPosition Sizing & Account Concentration")
+    print(
+        "This section is educational only. It shows how much cash this trade "
+        "ties up and how it compares with your entered account limits."
+    )
+    print(
+        f"Cash collateral required:  ${position_sizing['collateral_required']:,.2f}"
+    )
+
+    if position_sizing["available_capital"] is None:
+        print("Available capital:         Not provided")
+    else:
+        print(
+            f"Available capital:         ${position_sizing['available_capital']:,.2f}"
+        )
+
+    if position_sizing["collateral_percentage"] is None:
+        print("Capital used:              Not calculated")
+    else:
+        print(
+            f"Capital used:              {position_sizing['collateral_percentage']:.2f}% "
+            "of available capital"
+        )
+
+    if position_sizing["cash_remaining"] is None:
+        print("Cash remaining:            Not calculated")
+    else:
+        print(
+            f"Cash remaining:            ${position_sizing['cash_remaining']:,.2f}"
+        )
+
+    if position_sizing["max_allocation_percentage"] is None:
+        print("Allocation limit set:      Not provided")
+    else:
+        print(
+            "Allocation limit set:      "
+            f"{position_sizing['max_allocation_percentage']:.2f}% of available capital"
+        )
+
+    if position_sizing["allocation_limit_dollar_value"] is None:
+        print("Allocation dollar limit:   Not calculated")
+    else:
+        print(
+            "Allocation dollar limit:   "
+            f"${position_sizing['allocation_limit_dollar_value']:,.2f}"
+        )
+
+    if position_sizing["max_contracts_by_cash"] is None:
+        print("Max contracts by cash:     Not calculated")
+    else:
+        print(
+            f"Max contracts by cash:     {position_sizing['max_contracts_by_cash']}"
+        )
+
+    if position_sizing["max_contracts_by_allocation"] is None:
+        print("Max contracts by allocation: Not calculated")
+    else:
+        print(
+            "Max contracts by allocation: "
+            f"{position_sizing['max_contracts_by_allocation']}"
+        )
+
+    if position_sizing["exceeds_cash_limit"]:
+        print("Position check:            This trade exceeds the cash-based limit.")
+    elif position_sizing["available_capital"] is None:
+        print("Position check:            No account limit supplied.")
+    else:
+        print("Position check:            This trade does not exceed the cash-based limit.")
+
+    if position_sizing["exceeds_allocation_limit"]:
+        print(
+            "Allocation check:          This trade exceeds the user-defined allocation limit."
+        )
+    elif position_sizing["max_allocation_percentage"] is None:
+        print("Allocation check:          No allocation limit supplied.")
+    else:
+        print(
+            "Allocation check:          This trade does not exceed the user-defined allocation limit."
+        )
+
+    print(
+        "Concentration risk:        A larger percentage of capital in one position "
+        "can magnify the impact of a sharp decline or assignment."
+    )
+
+
 # This function prints the original inputs and calculated results neatly.
 # Keeping display code separate makes the calculation function easier to reuse.
 # The formatting after each colon controls commas and decimal places.
@@ -1134,6 +1441,8 @@ def display_results(
     next_earnings_date,
     earnings_data_source,
     option_contract_data,
+    available_capital=None,
+    max_allocation_percentage=None,
 ):
     """Display the trade details and calculated results."""
 
@@ -1259,6 +1568,14 @@ def display_results(
         support_price,
     )
 
+    position_sizing = build_position_sizing_analysis(
+        strike_price,
+        number_of_contracts,
+        available_capital,
+        max_allocation_percentage,
+    )
+    display_position_sizing_section(position_sizing)
+
     spread_percentage = None
     open_interest = None
     volume = None
@@ -1313,6 +1630,8 @@ def main():
         next_earnings_date,
         earnings_data_source,
         option_contract_data,
+        available_capital,
+        max_allocation_percentage,
     ) = get_user_inputs()
 
     # Check all inputs before using them in calculations.
@@ -1331,6 +1650,10 @@ def main():
         ma200,
         resistance_price,
         days_until_earnings,
+    )
+    validate_position_sizing_inputs(
+        available_capital,
+        max_allocation_percentage,
     )
 
     # Run the formulas and unpack the seven returned results.

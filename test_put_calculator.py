@@ -9,9 +9,16 @@ from unittest.mock import patch
 from put_calculator import (
     build_assignment_downside_analysis,
     build_option_candidate_analysis,
+    build_position_sizing_analysis,
+    calculate_allocation_limit_dollar_value,
+    calculate_cash_collateral_required,
+    calculate_cash_remaining_after_position,
+    calculate_collateral_percentage_of_capital,
     calculate_effective_assigned_cost_basis,
     calculate_iv_rank,
     calculate_breakeven_cushion,
+    calculate_max_contracts_by_allocation,
+    calculate_max_contracts_by_cash,
     calculate_max_theoretical_loss,
     calculate_put_expiration_pl,
     calculate_put_results,
@@ -26,6 +33,8 @@ from put_calculator import (
     classify_delta,
     classify_strike_distance,
     classify_trend,
+    contract_count_exceeds_allocation_limit,
+    contract_count_exceeds_cash_limit,
     create_trade_checklist,
     display_market_snapshot,
     earnings_occur_during_trade,
@@ -506,6 +515,138 @@ class AssignmentScenarioTests(unittest.TestCase):
         self.assertAlmostEqual(results[4], 33.18181818181818)
         self.assertAlmostEqual(results[5], 12.00)
         self.assertAlmostEqual(results[6], 14.400000000000004)
+
+
+class PositionSizingTests(unittest.TestCase):
+    """Tests for optional account concentration and position sizing."""
+
+    def test_optional_fields_left_blank_are_accepted(self):
+        analysis = build_position_sizing_analysis(
+            strike_price=22,
+            number_of_contracts=1,
+            available_capital=None,
+            max_allocation_percentage=None,
+        )
+        self.assertIsNone(analysis["available_capital"])
+        self.assertIsNone(analysis["max_allocation_percentage"])
+        self.assertIsNone(analysis["collateral_percentage"])
+        self.assertFalse(analysis["exceeds_cash_limit"])
+        self.assertFalse(analysis["exceeds_allocation_limit"])
+
+    def test_exact_allocation_boundary(self):
+        analysis = build_position_sizing_analysis(
+            strike_price=22,
+            number_of_contracts=1,
+            available_capital=10000,
+            max_allocation_percentage=22,
+        )
+        self.assertAlmostEqual(analysis["collateral_required"], 2200.00)
+        self.assertAlmostEqual(analysis["allocation_limit_dollar_value"], 2200.00)
+        self.assertEqual(analysis["max_contracts_by_cash"], 4)
+        self.assertEqual(analysis["max_contracts_by_allocation"], 1)
+        self.assertFalse(analysis["exceeds_allocation_limit"])
+
+    def test_collateral_below_allocation_limit(self):
+        analysis = build_position_sizing_analysis(
+            strike_price=22,
+            number_of_contracts=1,
+            available_capital=10000,
+            max_allocation_percentage=30,
+        )
+        self.assertAlmostEqual(analysis["collateral_percentage"], 22.00)
+        self.assertFalse(analysis["exceeds_allocation_limit"])
+
+    def test_collateral_above_allocation_limit(self):
+        analysis = build_position_sizing_analysis(
+            strike_price=22,
+            number_of_contracts=3,
+            available_capital=10000,
+            max_allocation_percentage=20,
+        )
+        self.assertTrue(analysis["exceeds_allocation_limit"])
+        self.assertEqual(analysis["max_contracts_by_allocation"], 0)
+
+    def test_insufficient_available_cash(self):
+        analysis = build_position_sizing_analysis(
+            strike_price=22,
+            number_of_contracts=5,
+            available_capital=10000,
+            max_allocation_percentage=50,
+        )
+        self.assertTrue(analysis["exceeds_cash_limit"])
+        self.assertEqual(analysis["max_contracts_by_cash"], 4)
+
+    def test_multiple_contracts(self):
+        analysis = build_position_sizing_analysis(
+            strike_price=22,
+            number_of_contracts=3,
+            available_capital=10000,
+            max_allocation_percentage=40,
+        )
+        self.assertAlmostEqual(analysis["collateral_required"], 6600.00)
+        self.assertAlmostEqual(analysis["cash_remaining"], 3400.00)
+        self.assertAlmostEqual(analysis["collateral_percentage"], 66.00)
+
+    def test_max_contract_rounding_down(self):
+        analysis = build_position_sizing_analysis(
+            strike_price=22,
+            number_of_contracts=1,
+            available_capital=5000,
+            max_allocation_percentage=15,
+        )
+        self.assertEqual(analysis["max_contracts_by_cash"], 2)
+        self.assertEqual(analysis["max_contracts_by_allocation"], 0)
+
+    def test_invalid_zero_available_capital(self):
+        with self.assertRaises(ValueError):
+            build_position_sizing_analysis(
+                strike_price=22,
+                number_of_contracts=1,
+                available_capital=0,
+                max_allocation_percentage=20,
+            )
+
+    def test_invalid_negative_available_capital(self):
+        with self.assertRaises(ValueError):
+            build_position_sizing_analysis(
+                strike_price=22,
+                number_of_contracts=1,
+                available_capital=-1,
+                max_allocation_percentage=20,
+            )
+
+    def test_zero_allocation_percentage_is_invalid(self):
+        with self.assertRaises(ValueError):
+            build_position_sizing_analysis(
+                strike_price=22,
+                number_of_contracts=1,
+                available_capital=10000,
+                max_allocation_percentage=0,
+            )
+
+    def test_negative_allocation_percentage_is_invalid(self):
+        with self.assertRaises(ValueError):
+            build_position_sizing_analysis(
+                strike_price=22,
+                number_of_contracts=1,
+                available_capital=10000,
+                max_allocation_percentage=-1,
+            )
+
+    def test_allocation_percentage_above_100_is_invalid(self):
+        with self.assertRaises(ValueError):
+            build_position_sizing_analysis(
+                strike_price=22,
+                number_of_contracts=1,
+                available_capital=10000,
+                max_allocation_percentage=101,
+            )
+
+    def test_position_sizing_preserves_version_8_0_behavior(self):
+        result = calculate_put_results(25, 22, 0.60, 1, 30)
+        self.assertAlmostEqual(result[0], 60.00)
+        self.assertAlmostEqual(result[1], 21.40)
+        self.assertAlmostEqual(result[2], 2200.00)
 
 
 if __name__ == "__main__":
