@@ -1406,6 +1406,81 @@ def display_position_sizing_section(position_sizing):
     )
 
 
+def build_trade_guardrails(analysis, position_sizing):
+    """Return concise, neutral guardrail messages from existing analysis results."""
+
+    messages = []
+
+    delta = analysis["delta"]
+    if delta is None:
+        messages.append("Delta: Worth reviewing because it is unknown")
+    else:
+        messages.append(f"Delta: {analysis['delta_context']}")
+
+    strike_distance = analysis["strike_distance"]
+    if strike_distance < 0:
+        messages.append(
+            "Strike distance: Worth reviewing because the strike is above the current stock price"
+        )
+    elif strike_distance < 2:
+        messages.append(
+            "Strike distance: Worth reviewing because the strike is very close to the current stock price"
+        )
+    else:
+        messages.append(f"Strike distance: {analysis['strike_context']}")
+
+    breakeven_cushion = analysis["breakeven_cushion"]
+    if breakeven_cushion < 0:
+        messages.append(
+            "Breakeven cushion: Worth reviewing because breakeven is above the current stock price"
+        )
+    else:
+        messages.append(
+            f"Breakeven cushion: {breakeven_cushion:.2f}% downside cushion"
+        )
+
+    if position_sizing["available_capital"] is None:
+        messages.append(
+            "Cash sufficiency: Available capital was not entered, so cash requirement was not evaluated"
+        )
+    elif position_sizing["exceeds_cash_limit"]:
+        messages.append("Cash sufficiency: Cash requirement exceeds entered available capital")
+    else:
+        messages.append("Cash sufficiency: Within entered available capital")
+
+    if position_sizing["max_allocation_percentage"] is None:
+        messages.append(
+            "Allocation limit: No user-selected allocation limit was entered"
+        )
+    elif position_sizing["exceeds_allocation_limit"]:
+        messages.append("Allocation limit: Exceeds your entered allocation limit")
+    else:
+        messages.append("Allocation limit: Within your entered allocation limit")
+
+    messages.append(f"Earnings: {analysis['earnings_context']}")
+
+    return {
+        "messages": tuple(messages),
+        "delta_context": analysis["delta_context"],
+        "strike_context": analysis["strike_context"],
+        "breakeven_cushion": breakeven_cushion,
+        "cash_limit_exceeded": position_sizing["exceeds_cash_limit"],
+        "allocation_limit_exceeded": position_sizing["exceeds_allocation_limit"],
+    }
+
+
+def display_trade_guardrails(guardrails):
+    """Display concise, educational guardrails without making a recommendation."""
+
+    print("\nTrade Guardrails")
+    print(
+        "These checks summarize existing trade and account context; they do not "
+        "approve or reject a trade."
+    )
+    for message in guardrails["messages"]:
+        print(f"- {message}")
+
+
 # This function prints the original inputs and calculated results neatly.
 # Keeping display code separate makes the calculation function easier to reuse.
 # The formatting after each colon controls commas and decimal places.
@@ -1575,6 +1650,9 @@ def display_results(
         max_allocation_percentage,
     )
     display_position_sizing_section(position_sizing)
+
+    guardrails = build_trade_guardrails(analysis, position_sizing)
+    display_trade_guardrails(guardrails)
 
     spread_percentage = None
     open_interest = None

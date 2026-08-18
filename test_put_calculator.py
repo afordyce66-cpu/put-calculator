@@ -10,6 +10,7 @@ from put_calculator import (
     build_assignment_downside_analysis,
     build_option_candidate_analysis,
     build_position_sizing_analysis,
+    build_trade_guardrails,
     calculate_allocation_limit_dollar_value,
     calculate_cash_collateral_required,
     calculate_cash_remaining_after_position,
@@ -37,10 +38,12 @@ from put_calculator import (
     contract_count_exceeds_cash_limit,
     create_trade_checklist,
     display_market_snapshot,
+    display_results,
     earnings_occur_during_trade,
     get_user_inputs,
     validate_inputs,
 )
+from trade_score import build_trade_quality_score
 
 
 class PutCalculatorTests(unittest.TestCase):
@@ -515,6 +518,191 @@ class AssignmentScenarioTests(unittest.TestCase):
         self.assertAlmostEqual(results[4], 33.18181818181818)
         self.assertAlmostEqual(results[5], 12.00)
         self.assertAlmostEqual(results[6], 14.400000000000004)
+
+
+class TradeGuardrailTests(unittest.TestCase):
+    """Tests for the concise Version 8.2 guardrail summary."""
+
+    def make_analysis(self, **changes):
+        snapshot = build_market_snapshot(
+            25,
+            24,
+            21,
+            date(2026, 9, 27),
+            45,
+            "Retrieved",
+        )
+        values = {
+            "stock_price": 25,
+            "strike_price": 22,
+            "premium_received": 0.60,
+            "breakeven_price": 21.40,
+            "strike_distance": 12.00,
+            "breakeven_cushion": 14.40,
+            "days_to_expiration": 30,
+            "cash_required": 2200.00,
+            "maximum_profit": 60.00,
+            "delta": 0.20,
+            "days_until_earnings": 45,
+            "earnings_source": "Retrieved",
+            "snapshot": snapshot,
+        }
+        values.update(changes)
+        return build_option_candidate_analysis(**values)
+
+    def test_guardrails_work_without_optional_account_inputs(self):
+        guardrails = build_trade_guardrails(
+            self.make_analysis(),
+            build_position_sizing_analysis(22, 1),
+        )
+
+        self.assertTrue(
+            any(
+                "Cash sufficiency: Available capital was not entered" in message
+                for message in guardrails["messages"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "Allocation limit: No user-selected allocation limit was entered" in message
+                for message in guardrails["messages"]
+            )
+        )
+
+    def test_delta_guardrail_reuses_existing_classification(self):
+        analysis = self.make_analysis(delta=0.40)
+        guardrails = build_trade_guardrails(
+            analysis,
+            build_position_sizing_analysis(22, 1),
+        )
+
+        self.assertEqual(guardrails["delta_context"], classify_delta(0.40))
+        self.assertTrue(
+            any(classify_delta(0.40) in message for message in guardrails["messages"])
+        )
+
+    def test_strike_and_breakeven_guardrails_reuse_existing_classifications(self):
+        analysis = self.make_analysis(strike_distance=1.5, breakeven_cushion=-1.0)
+        guardrails = build_trade_guardrails(
+            analysis,
+            build_position_sizing_analysis(22, 1),
+        )
+
+        self.assertEqual(guardrails["strike_context"], classify_strike_distance(1.5))
+        self.assertIn("strike is very close", guardrails["messages"][1])
+        self.assertIn("breakeven is above", guardrails["messages"][2])
+
+    def test_sufficient_cash_and_within_allocation_are_reported(self):
+        guardrails = build_trade_guardrails(
+            self.make_analysis(),
+            build_position_sizing_analysis(22, 1, 10000, 30),
+        )
+
+        self.assertTrue(
+            any("Within entered available capital" in message for message in guardrails["messages"])
+        )
+        self.assertTrue(
+            any("Within your entered allocation limit" in message for message in guardrails["messages"])
+        )
+        self.assertFalse(guardrails["cash_limit_exceeded"])
+        self.assertFalse(guardrails["allocation_limit_exceeded"])
+
+    def test_insufficient_cash_and_exceeded_allocation_are_reported(self):
+        guardrails = build_trade_guardrails(
+            self.make_analysis(),
+            build_position_sizing_analysis(22, 3, 5000, 20),
+        )
+
+        self.assertTrue(
+            any(
+                "Cash requirement exceeds entered available capital" in message
+                for message in guardrails["messages"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "Exceeds your entered allocation limit" in message
+                for message in guardrails["messages"]
+            )
+        )
+        self.assertTrue(guardrails["cash_limit_exceeded"])
+        self.assertTrue(guardrails["allocation_limit_exceeded"])
+
+    def test_partial_account_information_remains_optional(self):
+        guardrails = build_trade_guardrails(
+            self.make_analysis(),
+            build_position_sizing_analysis(22, 1, 10000, None),
+        )
+
+        self.assertTrue(
+            any("Within entered available capital" in message for message in guardrails["messages"])
+        )
+        self.assertTrue(
+            any(
+                "No user-selected allocation limit was entered" in message
+                for message in guardrails["messages"]
+            )
+        )
+
+    def test_guardrails_do_not_duplicate_position_sizing_calculations(self):
+        position_sizing = build_position_sizing_analysis(22, 1, 10000, 30)
+        with patch("put_calculator.calculate_cash_collateral_required") as mock_collateral_required:
+            with patch("put_calculator.calculate_allocation_limit_dollar_value") as mock_allocation_limit:
+                build_trade_guardrails(self.make_analysis(), position_sizing)
+
+        mock_allocation_limit.assert_not_called()
+        mock_collateral_required.assert_not_called()
+
+    def test_existing_score_and_scenario_results_remain_unchanged(self):
+        scorecard = build_trade_quality_score(
+            30,
+            0.20,
+            12.00,
+            14.40,
+            25,
+            24,
+            21,
+            50,
+            45,
+            "Retrieved",
+        )
+        scenario = build_assignment_downside_analysis(
+            25,
+            22,
+            0.60,
+            1,
+            21.40,
+            22.50,
+        )
+
+        self.assertEqual(scorecard["maximum"], 100)
+        self.assertEqual(scorecard["components"]["Delta"]["points"], 15)
+        self.assertAlmostEqual(scenario["scenario_results"]["breakeven"], 0.00)
+
+    def test_display_order_places_guardrails_before_scorecard(self):
+        output = StringIO()
+        with redirect_stdout(output):
+            display_results(
+                "SOFI", "Manual", 25, 22, 0.60, 1, 30, 60.00, 21.40,
+                2200.00, 2.7273, 33.1818, 12.00, 14.40, 0.20, 45.00,
+                50.00, 65.00, 22.50, 11.1111, 2.2222, 24.00, 4.1667,
+                21.00, 19.0476, 28.00, -10.7143, 45, None, "Manual", None,
+                10000, 30,
+            )
+
+        rendered = output.getvalue()
+        self.assertLess(
+            rendered.index("Assignment & Downside Scenarios"),
+            rendered.index("Position Sizing & Account Concentration"),
+        )
+        self.assertLess(
+            rendered.index("Position Sizing & Account Concentration"),
+            rendered.index("Trade Guardrails"),
+        )
+        self.assertLess(
+            rendered.index("Trade Guardrails"),
+            rendered.index("TRADE QUALITY SCORECARD"),
+        )
 
 
 class PositionSizingTests(unittest.TestCase):
