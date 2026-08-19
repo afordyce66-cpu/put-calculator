@@ -3,7 +3,11 @@
 from datetime import date
 import unittest
 
-from app import build_streamlit_scenario_rows, calculate_streamlit_analysis
+from app import (
+    build_streamlit_data_status,
+    build_streamlit_scenario_rows,
+    calculate_streamlit_analysis,
+)
 from put_calculator import build_assignment_downside_analysis
 
 
@@ -135,6 +139,40 @@ class StreamlitAnalysisTests(unittest.TestCase):
 
         self.assertEqual(len(rows), 4)
         self.assertNotIn("At support", [row["Scenario"] for row in rows])
+
+    def test_data_status_explains_manual_and_missing_optional_context(self):
+        result = calculate_streamlit_analysis(self.values())
+
+        messages = build_streamlit_data_status(result, self.values())
+
+        self.assertIn("Market data: Manual values are in use.", messages)
+        self.assertIn("Earnings: No verified earnings date is available.", messages)
+        self.assertIn("Account sizing: Available capital was not entered.", messages)
+        self.assertIn("Option-chain reference: Not requested or unavailable.", messages)
+
+    def test_data_status_omits_missing_messages_when_context_is_available(self):
+        values = self.values(
+            available_capital=10000.0,
+            delta=0.20,
+        )
+        result = calculate_streamlit_analysis(
+            values,
+            market_data={
+                "ticker": "SOFI",
+                "stock_price": 25.0,
+                "ma50": 24.0,
+                "ma200": 21.0,
+                "next_earnings_date": date(2026, 9, 27),
+                "days_until_earnings": 45,
+                "source": "Retrieved",
+            },
+        )
+
+        messages = build_streamlit_data_status(result, values)
+
+        self.assertIn("Market data: Retrieved automatically for the ticker.", messages)
+        self.assertNotIn("Earnings: No verified earnings date is available.", messages)
+        self.assertNotIn("Account sizing: Available capital was not entered.", messages)
 
 
 if __name__ == "__main__":

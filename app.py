@@ -241,9 +241,33 @@ def build_streamlit_scenario_rows(assignment_analysis):
     return tuple(rows)
 
 
+def build_streamlit_data_status(results, values):
+    """Return concise status messages for optional and manually entered data."""
+
+    messages = []
+    if results["market_data_source"] == "Retrieved":
+        messages.append("Market data: Retrieved automatically for the ticker.")
+    else:
+        messages.append("Market data: Manual values are in use.")
+
+    if values["delta"] is None:
+        messages.append("Delta: Not entered; delta context remains unknown.")
+
+    if results["next_earnings_date"] is None:
+        messages.append("Earnings: No verified earnings date is available.")
+
+    if values.get("available_capital") is None:
+        messages.append("Account sizing: Available capital was not entered.")
+
+    if results["option_contract_data"] is None:
+        messages.append("Option-chain reference: Not requested or unavailable.")
+
+    return tuple(messages)
+
+
 def _render_snapshot(results, values):
     st.subheader("Trade Snapshot")
-    st.caption("Existing calculator results, summarized before the detailed analysis.")
+    st.caption("The key numbers for this proposed cash-secured put.")
     columns = st.columns(4)
     metrics = (
         ("Strike", _money(values["strike_price"])),
@@ -266,6 +290,7 @@ def _render_snapshot(results, values):
 def _render_risk_summary(results, values):
     scorecard = results["scorecard"]
     st.subheader("Quick Risk Summary")
+    st.caption("Existing risk signals, shown without a recommendation.")
     score_columns = st.columns(3)
     score_columns[0].metric("Trade Quality Score", f"{scorecard['total']} / 100")
     score_columns[1].metric("Assessment", scorecard["assessment"])
@@ -296,7 +321,8 @@ def _render_risk_summary(results, values):
 
 
 def _render_outcomes(results):
-    st.subheader("Assignment and Expiration Outcomes")
+    st.subheader("Assignment & Expiration Outcomes")
+    st.caption("What the existing payoff and assignment calculations mean at expiration.")
     assignment = results["assignment"]
     guide = results["guide"]
     st.write(
@@ -321,7 +347,8 @@ def _render_outcomes(results):
 
 
 def _render_capital(results):
-    st.subheader("Position Sizing and Account Concentration")
+    st.subheader("Capital & Position Sizing")
+    st.caption("Cash collateral and account-limit context, when entered.")
     sizing = results["sizing"]
     columns = st.columns(3)
     columns[0].metric("Collateral required", _money(sizing["collateral_required"]))
@@ -338,7 +365,10 @@ def _render_capital(results):
         else _money(sizing["cash_remaining"]),
     )
     if sizing["available_capital"] is None:
-        st.info("Available capital was not entered; account sizing remains informational.")
+        st.info(
+            "Available capital was not entered, so cash remaining and contract limits "
+            "cannot be evaluated."
+        )
     else:
         st.write(f"Maximum contracts by cash: {sizing['max_contracts_by_cash']}")
         st.write(
@@ -348,7 +378,8 @@ def _render_capital(results):
 
 
 def _render_market_context(results, values):
-    st.subheader("Market and Technical Context")
+    st.subheader("Market & Technical Context")
+    st.caption("Manual or retrieved context used by the existing analysis.")
     columns = st.columns(3)
     columns[0].metric("Stock price", _money(results["stock_price"]))
     columns[1].metric("50-day average", _money(results["ma50"]))
@@ -362,7 +393,7 @@ def _render_market_context(results, values):
         f"IV Percentile: {values['iv_percentile']:.2f}%."
     )
     if results["next_earnings_date"] is None:
-        st.write("Earnings timing: manual estimate or unavailable.")
+        st.write("Earnings timing: no verified earnings date is available.")
     else:
         st.write(
             f"Next earnings: {results['next_earnings_date'].isoformat()} "
@@ -373,7 +404,7 @@ def _render_market_context(results, values):
 def _render_option_reference(results):
     option_data = results["option_contract_data"]
     if option_data is None:
-        st.info("No option-chain reference data was requested or available.")
+        st.info("No option-chain reference data was requested or available; manual strike and premium remain in use.")
         return
     contract = option_data["contract"]
     with st.expander("Option-chain reference data"):
@@ -506,9 +537,11 @@ def main():
         return
 
     _render_snapshot(results, values)
+    for message in build_streamlit_data_status(results, values):
+        st.caption(message)
     _render_risk_summary(results, values)
-    _render_outcomes(results)
     _render_capital(results)
+    _render_outcomes(results)
     _render_market_context(results, values)
     _render_option_reference(results)
 
