@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from put_calculator import (
     build_assignment_downside_analysis,
+    build_expiration_outcome_guide,
     build_option_candidate_analysis,
     build_position_sizing_analysis,
     build_trade_guardrails,
@@ -518,6 +519,133 @@ class AssignmentScenarioTests(unittest.TestCase):
         self.assertAlmostEqual(results[4], 33.18181818181818)
         self.assertAlmostEqual(results[5], 12.00)
         self.assertAlmostEqual(results[6], 14.400000000000004)
+
+
+class ExpirationOutcomeGuideTests(unittest.TestCase):
+    """Tests for the concise Version 8.3 expiration outcome guide."""
+
+    def make_assignment_analysis(self):
+        return build_assignment_downside_analysis(
+            stock_price=25,
+            strike_price=22,
+            premium_received=0.60,
+            number_of_contracts=1,
+            breakeven_price=21.40,
+            support_price=22.50,
+        )
+
+    def test_guide_contains_all_major_expiration_states(self):
+        guide = build_expiration_outcome_guide(self.make_assignment_analysis())
+        state_names = [name for name, _ in guide["states"]]
+
+        self.assertEqual(
+            state_names,
+            [
+                "above_strike",
+                "at_or_near_strike",
+                "below_strike_above_breakeven",
+                "at_breakeven",
+                "below_breakeven",
+            ],
+        )
+
+    def test_guide_uses_assignment_and_cost_basis_language(self):
+        guide = build_expiration_outcome_guide(self.make_assignment_analysis())
+        messages = " ".join(message for _, message in guide["states"])
+
+        self.assertIn("expires worthless", messages)
+        self.assertIn("assignment", messages.lower())
+        self.assertIn("100", messages)
+        self.assertIn("premium lowers the assigned cost basis", messages)
+        self.assertAlmostEqual(guide["effective_assigned_cost_basis"], 21.40)
+
+    def test_guide_preserves_expiration_payoff_results(self):
+        analysis = self.make_assignment_analysis()
+        guide = build_expiration_outcome_guide(analysis)
+
+        self.assertEqual(
+            guide["strike_expiration_pl"],
+            analysis["scenario_results"]["strike"],
+        )
+        self.assertEqual(
+            guide["breakeven_expiration_pl"],
+            analysis["scenario_results"]["breakeven"],
+        )
+
+    def test_guide_works_without_account_inputs(self):
+        guide = build_expiration_outcome_guide(self.make_assignment_analysis())
+
+        self.assertIsNone(guide["available_capital"])
+        self.assertIsNone(guide["collateral_required"])
+
+    def test_guide_reuses_existing_position_sizing_results(self):
+        position_sizing = build_position_sizing_analysis(22, 1, 10000, 30)
+        guide = build_expiration_outcome_guide(
+            self.make_assignment_analysis(),
+            position_sizing,
+        )
+
+        self.assertEqual(
+            guide["collateral_required"],
+            position_sizing["collateral_required"],
+        )
+        self.assertEqual(guide["available_capital"], 10000)
+
+    @patch("put_calculator.calculate_put_expiration_pl")
+    def test_guide_does_not_recalculate_payoffs(self, mock_payoff):
+        assignment_analysis = self.make_assignment_analysis()
+        mock_payoff.reset_mock()
+        build_expiration_outcome_guide(assignment_analysis)
+
+        mock_payoff.assert_not_called()
+
+    def test_guide_uses_neutral_language(self):
+        guide = build_expiration_outcome_guide(self.make_assignment_analysis())
+        rendered = " ".join(message for _, message in guide["states"]).lower()
+
+        for prohibited in ("buy", "sell", "recommended", "good trade", "safe trade", "you should"):
+            self.assertNotIn(prohibited, rendered)
+
+    def test_existing_version_8_calculations_and_guardrails_remain_available(self):
+        assignment = self.make_assignment_analysis()
+        sizing = build_position_sizing_analysis(22, 1, 10000, 30)
+        guardrails = build_trade_guardrails(
+            build_option_candidate_analysis(
+                25, 22, 0.60, 21.40, 12.00, 14.40, 30, 2200.00,
+                60.00, 0.20, 45, "Retrieved",
+                build_market_snapshot(25, 24, 21, date(2026, 9, 27), 45, "Retrieved"),
+            ),
+            sizing,
+        )
+
+        self.assertAlmostEqual(assignment["maximum_theoretical_loss"], 2140.00)
+        self.assertFalse(sizing["exceeds_cash_limit"])
+        self.assertFalse(guardrails["allocation_limit_exceeded"])
+
+    def test_output_order_places_guide_after_sizing_and_before_guardrails(self):
+        output = StringIO()
+        with redirect_stdout(output):
+            display_results(
+                "SOFI", "Manual", 25, 22, 0.60, 1, 30, 60.00, 21.40,
+                2200.00, 2.7273, 33.1818, 12.00, 14.40, 0.20, 45.00,
+                50.00, 65.00, 22.50, 11.1111, 2.2222, 24.00, 4.1667,
+                21.00, 19.0476, 28.00, -10.7143, 45, None, "Manual", None,
+                10000, 30,
+            )
+
+        rendered = output.getvalue()
+        self.assertLess(
+            rendered.index("Position Sizing & Account Concentration"),
+            rendered.index("Expiration Outcome Guide"),
+        )
+        self.assertLess(
+            rendered.index("Expiration Outcome Guide"),
+            rendered.index("Trade Guardrails"),
+        )
+        self.assertLess(
+            rendered.index("Trade Guardrails"),
+            rendered.index("TRADE QUALITY SCORECARD"),
+        )
 
 
 class TradeGuardrailTests(unittest.TestCase):

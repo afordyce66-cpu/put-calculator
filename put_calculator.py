@@ -700,17 +700,19 @@ def display_assignment_downside_scenarios(
     number_of_contracts,
     breakeven_price,
     support_price=None,
+    analysis=None,
 ):
     """Display assignment and downside scenario results for beginners."""
 
-    analysis = build_assignment_downside_analysis(
-        stock_price,
-        strike_price,
-        premium_received,
-        number_of_contracts,
-        breakeven_price,
-        support_price,
-    )
+    if analysis is None:
+        analysis = build_assignment_downside_analysis(
+            stock_price,
+            strike_price,
+            premium_received,
+            number_of_contracts,
+            breakeven_price,
+            support_price,
+        )
 
     print("\nAssignment & Downside Scenarios")
     print(
@@ -776,6 +778,88 @@ def display_assignment_downside_scenarios(
         print("Support price: Not available")
     else:
         print(f"Support price: ${support_price:,.2f}")
+
+
+def build_expiration_outcome_guide(assignment_analysis, position_sizing=None):
+    """Return a concise educational guide to the existing expiration outcomes."""
+
+    scenario_prices = assignment_analysis["scenario_prices"]
+    scenario_results = assignment_analysis["scenario_results"]
+    strike_price = scenario_prices["strike"]
+    breakeven_price = scenario_prices["breakeven"]
+    effective_cost_basis = assignment_analysis["effective_assigned_cost_basis"]
+    total_shares = assignment_analysis["total_shares"]
+
+    states = (
+        (
+            "above_strike",
+            "Above strike: the put expires worthless and the premium received "
+            "is the expiration profit; shares are not assigned.",
+        ),
+        (
+            "at_or_near_strike",
+            f"At or near the ${strike_price:,.2f} strike: assignment of "
+            f"{total_shares:.0f} shares ({total_shares / 100:.0f} contract(s) x 100) "
+            "is possible and may be likely; the premium lowers the assigned "
+            "cost basis.",
+        ),
+        (
+            "below_strike_above_breakeven",
+            f"Below strike but above ${breakeven_price:,.2f} breakeven: "
+            "assignment may occur, while the combined position remains above "
+            "breakeven at expiration.",
+        ),
+        (
+            "at_breakeven",
+            f"At ${breakeven_price:,.2f} breakeven: the combined expiration "
+            "profit/loss is approximately zero after the premium received.",
+        ),
+        (
+            "below_breakeven",
+            f"Below ${breakeven_price:,.2f} breakeven: assignment may occur and "
+            "the combined position has an expiration loss.",
+        ),
+    )
+
+    guide = {
+        "states": states,
+        "strike_price": strike_price,
+        "breakeven_price": breakeven_price,
+        "strike_expiration_pl": scenario_results["strike"],
+        "breakeven_expiration_pl": scenario_results["breakeven"],
+        "effective_assigned_cost_basis": effective_cost_basis,
+        "total_shares": total_shares,
+    }
+
+    if position_sizing is not None:
+        guide["collateral_required"] = position_sizing["collateral_required"]
+        guide["available_capital"] = position_sizing["available_capital"]
+    else:
+        guide["collateral_required"] = None
+        guide["available_capital"] = None
+
+    return guide
+
+
+def display_expiration_outcome_guide(guide):
+    """Display the concise expiration outcome guide without recommendations."""
+
+    print("\nExpiration Outcome Guide")
+    print(
+        "These are educational expiration states using the existing put payoff "
+        "and assignment calculations."
+    )
+    for _, message in guide["states"]:
+        print(f"- {message}")
+    print(
+        "Effective assigned cost basis: "
+        f"${guide['effective_assigned_cost_basis']:,.2f} per share"
+    )
+    if guide["collateral_required"] is not None:
+        print(
+            "Assignment collateral context: "
+            f"${guide['collateral_required']:,.2f} from existing position sizing"
+        )
 
 
 def format_optional_money(value):
@@ -1634,6 +1718,14 @@ def display_results(
         snapshot,
     )
     display_option_candidate_analysis(analysis)
+    assignment_analysis = build_assignment_downside_analysis(
+        stock_price,
+        strike_price,
+        premium_received,
+        number_of_contracts,
+        breakeven_price,
+        support_price,
+    )
     display_assignment_downside_scenarios(
         stock_price,
         strike_price,
@@ -1641,6 +1733,7 @@ def display_results(
         number_of_contracts,
         breakeven_price,
         support_price,
+        assignment_analysis,
     )
 
     position_sizing = build_position_sizing_analysis(
@@ -1650,6 +1743,12 @@ def display_results(
         max_allocation_percentage,
     )
     display_position_sizing_section(position_sizing)
+
+    expiration_guide = build_expiration_outcome_guide(
+        assignment_analysis,
+        position_sizing,
+    )
+    display_expiration_outcome_guide(expiration_guide)
 
     guardrails = build_trade_guardrails(analysis, position_sizing)
     display_trade_guardrails(guardrails)
