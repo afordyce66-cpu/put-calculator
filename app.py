@@ -45,7 +45,11 @@ def calculate_streamlit_analysis(
     ma50 = float(market_data["ma50"])
     ma200 = float(market_data["ma200"])
     next_earnings_date = market_data.get("next_earnings_date")
-    days_until_earnings = int(market_data["days_until_earnings"])
+    retrieved_days_until_earnings = market_data.get("days_until_earnings")
+    if retrieved_days_until_earnings is None:
+        days_until_earnings = int(values["days_until_earnings"])
+    else:
+        days_until_earnings = int(retrieved_days_until_earnings)
     earnings_source = values.get("earnings_source", "Manual")
     if market_data.get("source") == "Retrieved" and next_earnings_date is not None:
         earnings_source = "Retrieved"

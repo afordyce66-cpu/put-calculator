@@ -81,6 +81,39 @@ class StreamlitAnalysisTests(unittest.TestCase):
         self.assertEqual(result["next_earnings_date"], date(2026, 9, 27))
         self.assertEqual(result["days_until_earnings"], 45)
 
+    def test_retrieved_market_data_without_earnings_uses_manual_days_fallback(self):
+        values = self.values(days_until_earnings=37)
+
+        result = calculate_streamlit_analysis(
+            values,
+            market_data={
+                "ticker": "SOFI",
+                "stock_price": 25.0,
+                "ma50": 24.0,
+                "ma200": 21.0,
+                "next_earnings_date": None,
+                "days_until_earnings": None,
+                "source": "Retrieved",
+            },
+        )
+
+        self.assertEqual(result["market_data_source"], "Retrieved")
+        self.assertEqual(result["stock_price"], 25.0)
+        self.assertEqual(result["ma50"], 24.0)
+        self.assertEqual(result["ma200"], 21.0)
+        self.assertIsNone(result["next_earnings_date"])
+        self.assertEqual(result["days_until_earnings"], 37)
+
+        messages = build_streamlit_data_status(result, values)
+        self.assertIn(
+            "Market data: Retrieved automatically for the ticker.",
+            messages,
+        )
+        self.assertIn(
+            "Earnings: No verified earnings date is available.",
+            messages,
+        )
+
     def test_invalid_iv_range_uses_existing_validation(self):
         with self.assertRaises(ValueError):
             calculate_streamlit_analysis(self.values(iv_low=70.0, iv_high=65.0))
