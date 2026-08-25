@@ -28,7 +28,8 @@ def calculate_prices_from_history(ticker, history):
     closing_prices = history["Close"].dropna()
     if len(closing_prices) < 200:
         raise MarketDataError(
-            "At least 200 trading days are needed for the 200-day average."
+            f"Only {len(closing_prices)} valid trading days were retrieved; "
+            "200 are required for the 200-day average."
         )
 
     # The latest available close is not guaranteed to be a real-time quote.
@@ -101,6 +102,17 @@ def get_market_data(ticker):
         # Two years normally provides more than the required 200 trading days.
         stock = yf.Ticker(normalized_ticker)
         history = stock.history(period="2y", interval="1d", auto_adjust=False)
+
+        valid_closes = (
+            len(history["Close"].dropna())
+            if history is not None and "Close" in history.columns
+            else 0
+        )
+        if valid_closes < 200:
+            history = stock.history(
+                period="5y", interval="1d", auto_adjust=False
+            )
+
         market_data = calculate_prices_from_history(normalized_ticker, history)
 
         # Earnings data is optional. Price data remains usable if this fails.

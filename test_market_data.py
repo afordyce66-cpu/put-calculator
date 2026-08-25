@@ -33,6 +33,59 @@ class MarketDataTests(unittest.TestCase):
         self.assertEqual(result["stock_price"], 201.0)
         self.assertAlmostEqual(result["ma50"], sum(closes[-50:]) / 50)
         self.assertAlmostEqual(result["ma200"], sum(closes[-200:]) / 200)
+        mock_ticker.return_value.history.assert_called_once_with(
+            period="2y", interval="1d", auto_adjust=False
+        )
+
+    @patch("market_data.yf.Ticker")
+    def test_insufficient_two_year_history_retries_with_five_years(
+        self, mock_ticker
+    ):
+        """A short two-year response is replaced by a usable five-year response."""
+
+        five_year_closes = list(range(1, 251))
+        mock_ticker.return_value.history.side_effect = [
+            pd.DataFrame({"Close": range(1, 148)}),
+            pd.DataFrame({"Close": five_year_closes}),
+        ]
+
+        result = get_market_data("SOFI")
+
+        self.assertEqual(result["stock_price"], 250.0)
+        self.assertAlmostEqual(
+            result["ma50"], sum(five_year_closes[-50:]) / 50
+        )
+        self.assertAlmostEqual(
+            result["ma200"], sum(five_year_closes[-200:]) / 200
+        )
+        self.assertEqual(
+            mock_ticker.return_value.history.call_args_list,
+            [
+                unittest.mock.call(
+                    period="2y", interval="1d", auto_adjust=False
+                ),
+                unittest.mock.call(
+                    period="5y", interval="1d", auto_adjust=False
+                ),
+            ],
+        )
+
+    @patch("market_data.yf.Ticker")
+    def test_insufficient_two_and_five_year_history_raises(self, mock_ticker):
+        """A short retry still cannot produce a 200-day moving average."""
+
+        mock_ticker.return_value.history.side_effect = [
+            pd.DataFrame({"Close": range(1, 148)}),
+            pd.DataFrame({"Close": range(1, 151)}),
+        ]
+
+        with self.assertRaisesRegex(
+            MarketDataError,
+            "Only 150 valid trading days were retrieved; 200 are required",
+        ):
+            get_market_data("SOFI")
+
+        self.assertEqual(mock_ticker.return_value.history.call_count, 2)
 
     @patch("market_data.yf.Ticker")
     def test_successful_future_earnings_date_retrieval(self, mock_ticker):
